@@ -25,7 +25,8 @@ param(
   [string]$Repo = 'roco',
   [string]$KeyName = 'id_ed25519',
   [string]$SshDir = (Join-Path $env:USERPROFILE '.ssh'),   # 默认 ~/.ssh，可覆盖（测试用）
-  [switch]$Force                     # 已有密钥时也重新生成
+  [switch]$Force,                    # 已有密钥时也重新生成
+  [switch]$FixOnly                   # 只修 config（去 BOM / 重写），不动密钥
 )
 
 $ErrorActionPreference = 'Stop'
@@ -44,7 +45,9 @@ if (-not (Test-Path $keygen)) { throw "找不到 $keygen" }
 
 # ---------------------------------------------------------------- 1) 密钥
 if (-not (Test-Path $sshDir)) { New-Item -ItemType Directory -Force -Path $sshDir | Out-Null }
-if ((Test-Path $keyPath) -and -not $Force) {
+if ($FixOnly) {
+  Info '-FixOnly：只修 ~/.ssh/config，不动密钥'
+} elseif ((Test-Path $keyPath) -and -not $Force) {
   Info "已存在密钥 $keyPath（要重新生成就加 -Force）"
 } else {
   Info "生成 ED25519 密钥：$keyPath"
@@ -54,6 +57,25 @@ if ((Test-Path $keyPath) -and -not $Force) {
 }
 
 # ---------------------------------------------------------------- 2) config
+# 关键：必须写成【不带 BOM】的 UTF-8。
+# PowerShell 5.1 的 `Set-Content -Encoding utf8` 会偷偷加 BOM(EF BB BF)，
+# 而 OpenSSH（尤其 Git 自带的 MSYS2 版）不认，会把首行读成
+#   Bad configuration option: \357\273\277host
+# 导致 git push 直接失败。这里统一用 .NET 写无 BOM 的 UTF-8。
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+function Write-TextNoBom([string]$Path, [string]$Text) {
+  [System.IO.File]::WriteAllText($Path, $Text, $utf8NoBom)
+}
+function Repair-Bom([string]$Path) {
+  $raw = [System.IO.File]::ReadAllBytes($Path)
+  if ($raw.Length -ge 3 -and $raw[0] -eq 0xEF -and $raw[1] -eq 0xBB -and $raw[2] -eq 0xBF) {
+    $text = [System.Text.Encoding]::UTF8.GetString($raw, 3, $raw.Length - 3)
+    Write-TextNoBom $Path $text
+    return $true
+  }
+  return $false
+}
+
 $block = @"
 Host github.com
     HostName ssh.github.com
@@ -66,21 +88,29 @@ Host github.com
 "@
 
 if (Test-Path $cfgPath) {
-  $existing = Get-Content $cfgPath -Raw
+  $hadBom = Repair-Bom $cfgPath
+  if ($hadBom) { Good "$cfgPath 原本带 BOM（会导致 OpenSSH 报 Bad configuration option），已去掉" }
+  $existing = [System.IO.File]::ReadAllText($cfgPath)
   if ($existing -match 'Host\s+github\.com') {
-    Warn "$cfgPath 里已经有 github.com 的配置，已备份为 config.bak，并替换该段"
+    Warn "$cfgPath 里已有 github.com 配置，已备份为 config.bak，并替换该段"
     Copy-Item $cfgPath "$cfgPath.bak" -Force
     # 删掉已有的 github.com 段（从 Host github.com 到下一个 Host 之前）
     $cleaned = [regex]::Replace($existing, '(?ms)^Host\s+github\.com.*?(?=^Host\s|\z)', '')
-    Set-Content -Path $cfgPath -Value ($cleaned.TrimEnd() + "`n`n" + $block) -Encoding utf8
+    Write-TextNoBom $cfgPath ($cleaned.TrimEnd() + "`n`n" + $block)
+    Good "已更新 $cfgPath"
   } else {
-    Add-Content -Path $cfgPath -Value "`n$block" -Encoding utf8
+    Write-TextNoBom $cfgPath ($existing.TrimEnd() + "`n`n" + $block)
     Good "已把配置追加到 $cfgPath"
   }
 } else {
-  Set-Content -Path $cfgPath -Value $block -Encoding utf8
+  Write-TextNoBom $cfgPath $block
   Good "已写入 $cfgPath"
 }
+
+# 自检：确认没有 BOM
+$head = [System.IO.File]::ReadAllBytes($cfgPath)[0..2]
+if ($head[0] -eq 0xEF) { Warn "$cfgPath 仍有 BOM，请手动处理" }
+else { Good "$cfgPath 无 BOM（首字节 $($head -join ',')）" }
 
 # 收紧密钥权限（OpenSSH 对权限敏感；非管理员或特殊环境失败也不影响使用）
 try { & icacls $keyPath /inheritance:r /grant:r "$($env:USERNAME):(R)" 2>&1 | Out-Null } catch { Warn '设置密钥权限失败（一般不影响）' }
