@@ -515,30 +515,43 @@ ok(JSON.stringify(api.STATE.nat.stats) === natSnapshot,
 ok(api.STATE.nat !== wc, '两个状态对象不是同一个引用');
 
 /* ---------------------------------------------------------- 基础数值明细 */
-// 详情页要能把"面板值是怎么来的"摊开：种族值 / 种族值×系数 / 常数 / 个体值 / 性格 / 面板
-console.log('\n· 基础数值明细');
+// 详情页每行要把"面板值是怎么来的"和加点控件合在一起：
+//   基础（种族值 × 系数）+ 常数 + 个体 × 系数 → ×性格 → + 常数 = 面板值  [性格+ 性格− 个体]
+console.log('\n· 详情页每行：基础数值 + 加点控件合并');
 api.spiritDetail('152:1');
 const baseHtml = ids.get('modalBody').innerHTML;
-ok(/基础数值/.test(baseHtml), '详情里有「基础数值」区块');
-ok((baseHtml.match(/class="base-table"/g) || []).length === 1, '基础数值表存在');
-// 六项都要有：种族值那一列必须出现该精灵的真实种族值
-const wingSp = api.STATE.bySpirit.get('152:1');
-ok(new RegExp(`>${wingSp.stats.spd}<`).test(baseHtml), `表里出现过速度种族值 ${wingSp.stats.spd}`);
-ok(/种族值 × 系数/.test(baseHtml), '表头写明了「种族值 × 系数」');
+ok(/每行怎么读/.test(baseHtml), '详情里有「每行怎么读」的说明');
+ok(!/base-table/.test(baseHtml), '不再有单独的基础数值表（已合并进每行）');
+const boxBase = ids.get('modalBody')._el.querySelector('#natalBlock');
+const combined = boxBase.querySelectorAll('.nat-line.combined');
+ok(combined.length === 6, `六行都是合并行（实际 ${combined.length}）`);
+// 每行都要有：基础 / 常数 / 个体 / 面板 这几段，以及性格开关与个体输入
+let complete = 0;
+for (const line of combined) {
+  const hasBase = line.innerHTML.includes('nb-k');
+  const hasPlus = line.innerHTML.includes('nb-plus');
+  const hasIvInput = line.querySelectorAll('[data-nat-iv]').length === 1;
+  const hasBtns = line.querySelectorAll('[data-nat-btn]').length === 2;
+  const hasVal = line.querySelectorAll('.nat-val').length === 1;
+  const hasBar = line.querySelectorAll('.bar').length === 1;
+  if (hasBase && hasPlus && hasIvInput && hasBtns && hasVal && hasBar) complete++;
+}
+ok(complete === 6, `六行都含 基础/常数/个体/面板/开关/条（齐全 ${complete}/6）`);
 
-// 逐项核对：用 statBreakdown 算出的面板值必须出现在页面里
+// 逐项核对：合并行里出现的面板值必须与 statBreakdown 一致
+const wingSp = api.STATE.bySpirit.get('152:1');
 const wc2 = api.spiritCalcOf(wingSp);
 for (const k of ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd']) {
   const b = api.statBreakdown(k, wingSp.stats[k], wc2.stats[k].iv, wc2.stats[k].nature);
-  ok(new RegExp(`<b>${b.panel}</b>`).test(baseHtml), `${api.STATE.data ? '' : ''}${k} 面板 ${b.panel} 出现在表里`);
+  ok(new RegExp(`>${b.panel}<`).test(baseHtml), `${k} 面板 ${b.panel} 出现在行里`);
+  ok(new RegExp(`>${b.basePart}<`).test(baseHtml), `${k} 基础值（种族×系数）${b.basePart} 出现在行里`);
 }
-// statBreakdown 自检：不投个体 + 中性 = 该精灵的最低面板
+// statBreakdown 自检
 const b0 = api.statBreakdown('spd', wingSp.stats.spd, 0, 'neutral');
 ok(b0.ivGain === 0 && b0.natureGain === 0, '个体0/中性时两处增量都是 0');
 const b1 = api.statBreakdown('spd', wingSp.stats.spd, 60, 'up');
 ok(b1.ivGain > 0 && b1.natureGain > 0, `投满+加成时两项增量都为正（+${b1.ivGain} / +${b1.natureGain}）`);
 ok(b1.panel === api.panelInt('spd', wingSp.stats.spd, 60, 'up'), 'statBreakdown 与 panelInt 结果一致');
-// 生命用的是另一套系数
 const bh = api.statBreakdown('hp', 78, 0, 'neutral');
 ok(bh.flat === 70 && bh.const === 100, `生命常数是 70 / 100（实际 ${bh.flat} / ${bh.const}）`);
 

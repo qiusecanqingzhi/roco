@@ -200,39 +200,50 @@ function natalBlock(sp, c) {
     </div>`;
   }).join('');
 
-  // 基础数值明细表：把每个数字的来源列清楚（照游戏内属性页的形态）
-  const detail = STAT_ORDER.map((k) => {
-    const st = c.stats[k];
-    const b = statBreakdown(k, sp.stats[k] ?? 0, st.iv, st.nature);
-    const tag = st.nature === 'up'
-      ? `<span class="nv-up">▲ ×${NATURE_MULT.up}</span>`
-      : st.nature === 'down' ? `<span class="nv-down">▼ ×${NATURE_MULT.down}</span>` : '<span class="desc">—</span>';
-    return `<tr>
-      <td><span class="nat-ic-wrap">${stateIcon(k)}</span> <b>${STAT_LABEL6[k]}</b></td>
-      <td class="num">${b.baseStat}</td>
-      <td class="num">${b.basePart}</td>
-      <td class="num">${b.flat}</td>
-      <td class="num">${st.iv}${b.ivGain ? ` <span class="gain">+${b.ivGain}</span>` : ''}</td>
-      <td class="mid">${tag}</td>
-      <td class="num"><b>${b.panel}</b></td>
-    </tr>`;
-  }).join('');
-
+  // 合并成一行：基础数值（种族值 × 系数 + 常数）+ 加点控件 + 面板值
+  // 之前是"上面一组加点控件 + 下面一张基础数值表"，同一项信息出现两次；现在合成一行。
   const controls = STAT_ORDER.map((k) => {
     const st = c.stats[k];
+    const b = statBreakdown(k, sp.stats[k] ?? 0, st.iv, st.nature);
     const canEdit = st.iv > 0 || invested < 3;
     const btn = (kind, label) => `<button class="nat-btn ${kind}${st.nature === kind ? ' on' : ''}"
       data-nat-btn="${k}" data-nat-kind="${kind}">${label}</button>`;
-    return `<div class="nat-line compact">
-      <span class="nat-ic-wrap">${stateIcon(k)}</span>
-      <span class="nat-name">${STAT_LABEL6[k]}</span>
-      <span class="nat-val">${vals[k]}</span>
+    const denom = STAT_MAX[k] ?? 250;
+    const baseW = Math.min(100, (b.noIvPanel / denom) * 100);
+    const ivW = Math.min(100 - baseW, (Math.max(0, b.ivGain) / denom) * 100);
+    const mark = st.nature === 'up' ? '<b class="nv-up">▲</b>' : st.nature === 'down' ? '<b class="nv-down">▼</b>' : '';
+    return `<div class="nat-line combined">
+      <span class="nat-name"><span class="nat-ic-wrap">${stateIcon(k)}</span>${STAT_LABEL6[k]}${mark}</span>
+
+      <span class="nb" title="种族值 ${b.baseStat} × 系数 ${STAT_COEF[k]?.base ?? STAT_NORMAL_COEF.base} = ${b.basePart}">
+        <span class="nb-k">基础</span><b>${b.basePart}</b>
+      </span>
+      <span class="nb-plus">+</span>
+      <span class="nb" title="公式里的常数（生命 70 / 其余 10）">
+        <b>${b.flat}</b>
+      </span>
+      <span class="nb-plus">+</span>
+      <span class="nb iv" title="个体值 ${st.iv} × 系数 ${STAT_COEF[k]?.iv ?? STAT_NORMAL_COEF.iv}${b.ivGain ? ' = 面板 +' + b.ivGain : ''}">
+        <span class="nb-k">个体</span><b>${st.iv}</b>${b.ivGain ? `<i class="gain">+${b.ivGain}</i>` : ''}
+      </span>
+      ${st.nature !== 'neutral' ? `<span class="nb-nat ${st.nature === 'up' ? 'nv-up' : 'nv-down'}">×${b.coef}</span>` : ''}
+      <span class="nb-const">+${b.const}</span>
+      <span class="nb-plus">=</span>
+
+      <span class="nat-val">${b.panel}</span>
+
       <span class="nat-ctl">
         ${btn('up', '性格+')}${btn('down', '性格−')}
-        <span class="nat-iv">个体
+        <span class="nat-iv"><span class="nat-iv-k">个体</span>
           <input type="number" id="dniv-${k}" min="0" max="${cap}" value="${st.iv}"
-                 data-nat-iv="${k}" data-in-modal="1" ${canEdit ? '' : 'disabled'}>
+                 data-nat-iv="${k}" data-in-modal="1" ${canEdit ? '' : 'disabled'} aria-label="${STAT_LABEL6[k]}个体值">
           <span class="nat-iv-max">/${cap}</span></span>
+      </span>
+
+      <span class="nat-barwrap">
+        <span class="bar s-${k}" title="${b.panel} / 参考上限 ${denom}">
+          <i style="width:${baseW}%"></i>${ivW > 0 ? `<u style="width:${ivW}%"></u>` : ''}
+        </span>
       </span>
     </div>`;
   }).join('');
@@ -256,25 +267,14 @@ function natalBlock(sp, c) {
 
     <div class="natal-base">
       <div class="natal-base-head">
-        <b>基础数值</b>
-        <span class="desc">面板 = round(种族值 × 系数 + 个体值 × 系数 + 常数) × 性格 + 常数</span>
+        <b>每行怎么读</b>
+        <span class="desc">基础（种族值 × 系数）+ 常数 + 个体 × 系数 → ×性格 → + 常数 = 面板值</span>
       </div>
-      <div class="table-wrap"><table class="base-table">
-        <thead><tr>
-          <th>属性</th>
-          <th class="num">种族值</th>
-          <th class="num">种族值 × 系数</th>
-          <th class="num">常数</th>
-          <th class="num">个体值</th>
-          <th class="mid">性格</th>
-          <th class="num">面板值</th>
-        </tr></thead>
-        <tbody>${detail}</tbody>
-      </table></div>
-      <div class="desc" style="margin-top:6px;font-size:12px">
-        生命用另一套系数（种族值 × 1.7 + 个体值 × 0.85 + 70，最后 + 100）；
-        其余五项是 种族值 × 1.1 + 个体值 × 0.55 + 10，最后 + 50。
-        「个体值」列括号里的数字是它实际带来的面板增量（会被性格放大或缩小）。
+      <div class="desc" style="font-size:12px">
+        生命用另一套系数：种族值 × 1.7 + 个体值 × 0.85 + 70，乘性格后 + 100；
+        其余五项是 种族值 × 1.1 + 个体值 × 0.55 + 10，乘性格后 + 50。
+        个体那个小绿字（如 <span class="gain">+40</span>）是它实际带来的面板增量 ——
+        性格会把它一起放大或缩小，所以不等于 个体值 × 0.55。
       </div>
     </div>
   </div>`;
