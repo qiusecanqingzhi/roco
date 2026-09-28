@@ -177,26 +177,36 @@ for (const s of rows('SELECT id, image_url FROM skill WHERE locale = ? ORDER BY 
 /* ---------------------------------------------------------------- 血脉
    每只精灵 18 种血脉，每种给 1 个专属技能。这些技能不在 spirit_skill 里，
    只在详情 JSON 的 bloodline_options 中，单独存在 spirit_bloodline 表。
-   这里按 "handbook:form" 归组，并把图标转成本地路径。 */
+
+   体积优化：血脉种类只有 18 种，图标/秘药名/秘药图标对同一种血脉是重复的。
+   早期版本每条都塞 icon/item/itemIcon（每条 319 字符 × 11238 条 = 3.38 MB），
+   现在把它们提到按 bloodline_id 索引的 meta 里，每行只留 (id, skillId, skill, lv)。
+   实测 bundle 从 6.1 MB 降到约 1.2 MB。 */
 const bloodlineRows = rows('SELECT * FROM spirit_bloodline WHERE locale = ? ORDER BY handbook_id, form_id, bloodline_id', L);
 const spiritBloodlines = new Map();
-const bloodlineIconUrls = [];        // 原站 URL，给图片清单用
+const bloodlineMeta = new Map();     // bloodline_id -> { name, short, icon, item, itemIcon }
+const skillMetaExtra = new Map();    // skill_id -> 图标本地路径（血脉技能也有图标）
 for (const r of bloodlineRows) {
   const key = `${r.handbook_id}:${r.form_id}`;
   if (!spiritBloodlines.has(key)) spiritBloodlines.set(key, []);
   spiritBloodlines.get(key).push({
     id: r.bloodline_id,
-    name: r.bloodline_name,
-    short: r.bloodline_short || null,
-    icon: assetName(r.bloodline_icon),
-    item: r.grant_item || null,
-    itemIcon: assetName(r.grant_item_icon),
     skillId: r.skill_id,
     skill: r.skill_name || null,
     lv: r.unlock_level,
-    skillIcon: assetName(r.skill_icon),
   });
-  for (const u of [r.bloodline_icon, r.grant_item_icon, r.skill_icon]) if (u) bloodlineIconUrls.push(u);
+  if (!bloodlineMeta.has(r.bloodline_id)) {
+    bloodlineMeta.set(r.bloodline_id, {
+      name: r.bloodline_name,
+      short: r.bloodline_short || null,
+      icon: assetName(r.bloodline_icon),
+      item: r.grant_item || null,
+      itemIcon: assetName(r.grant_item_icon),
+    });
+  }
+  if (r.skill_id && r.skill_icon && !skillMetaExtra.has(r.skill_id)) {
+    skillMetaExtra.set(r.skill_id, assetName(r.skill_icon));
+  }
 }
 
 /* ---------------------------------------------------------------- 技能 */
@@ -213,6 +223,29 @@ for (const r of learnerRows) {
   });
 }
 const skillByName = new Map(types.map((t) => [t.name, t.id]));
+
+// 原始 damage 数组：数据库只存了 damage_min/max（基础威力），
+// 完整数组在抓取产物 out/<locale>/skills.jsonl 里 —— 从那里读，避免再改库结构。
+// 注意变量名是 L（= cfg.locale）。这里踩过一次：写成不存在的 locale，
+// path.join 得到 undefined，existsSync 直接返回 false，整段静默跳过、damage 全空。
+const damageById = new Map();
+{
+  const p = path.join(path.dirname(cfg.db), L, 'skills.jsonl');
+  if (fs.existsSync(p)) {
+    let n = 0;
+    for (const line of fs.readFileSync(p, 'utf8').trim().split('\n')) {
+      if (!line) continue;
+      try {
+        const r = JSON.parse(line);
+        if (Array.isArray(r.damage)) { damageById.set(r.id, r.damage); n++; }
+      } catch { /* 跳过坏行 */ }
+    }
+    if (!n) console.warn(`  ⚠ ${p} 里没有可用的 damage 数组`);
+  } else {
+    console.warn(`  ⚠ 找不到 ${p}，技能原始 damage 数组将为空（先跑 node node/scrape.mjs）`);
+  }
+}
+
 const skills = skillRows.map((s) => ({
   id: s.id,
   name: s.name,
@@ -220,8 +253,15 @@ const skills = skillRows.map((s) => ({
   type: s.damage_type || null,
   typeId: skillByName.get(s.damage_type) ?? null,
   energy: s.energy_cost,
+  // damage_min/damage_max 现在都是"基础威力"（= damage[0]）。
+  // 早先版本对 damage 数组取 min/max，把 [105,1,20580010,...] 里的上限哨兵
+  // 当成威力显示成 0~20580010 —— 已修。powerIsVariable 为真时页面加「可变」标记。
   dmgMin: s.damage_min,
   dmgMax: s.damage_max,
+  powerIsVariable: s.power_is_variable ? 1 : 0,
+  // 原始 damage 数组也导出：可变威力技能的 [1..] 存着阈值/状态信息，界面暂不显示，
+  // 但留在数据里方便以后做"威力成长曲线"之类的功能，也便于核对上游。
+  damage: damageById.get(s.id) ?? [],
   cdMin: s.cooldown_min,
   cdMax: s.cooldown_max,
   src: s.source_types,
@@ -286,6 +326,10 @@ const meta = {
   types,
   statIcons,
   skillIcons,
+  // 血脉元数据（按 bloodline_id 索引）：名称/图标/秘药；避免每行重复存
+  bloodlines: Object.fromEntries(bloodlineMeta),
+  // 血脉技能的图标（按 skill_id 索引）
+  bloodlineSkillIcons: Object.fromEntries(skillMetaExtra),
 };
 
 // 精灵 -> 技能 / 技能 -> 可学精灵（都是对象映射，按需要查）
@@ -325,7 +369,10 @@ for (const s of skills) addUrl(s.imgOnline);
 for (const t of types) addUrl(t.iconOnline);
 for (const x of statIcons) addUrl(x.iconOnline);
 for (const u of passiveIconUrls) addUrl(u);
-for (const u of bloodlineIconUrls) addUrl(u);
+// 血脉相关的图片：从表里取原站 URL（导出结构里已不再逐条保存路径）
+for (const r of bloodlineRows) {
+  for (const u of [r.bloodline_icon, r.grant_item_icon, r.skill_icon]) if (u) addUrl(u);
+}
 writeJson(path.join(cfg.out, 'assets.json'), [...urls].sort());
 
 console.log(`\n✓ 完成（${((Date.now() - t0) / 1000).toFixed(1)}s）`);

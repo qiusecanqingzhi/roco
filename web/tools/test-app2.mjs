@@ -152,6 +152,32 @@ for (const s of api.STATE.data.skills.slice(0, 40)) {
 }
 ok(rawTagCount === 0, `抽查 40 个技能详情，无一处残留裸标记（实际 ${rawTagCount}）`);
 
+/* ------------------------------------------------ 威力显示（damage 数组） */
+// damage[0] 才是基础威力；[1..] 是附加状态/阈值/上限哨兵。
+// 早先版本取 min/max，把极寒领域显示成 0~20580010 —— 这条断言防止回归。
+console.log('\n· 技能威力');
+const allSkills = api.STATE.data.skills;
+const over = allSkills.filter((s) => (s.dmgMax ?? 0) > 300);
+ok(over.length === 0, `没有威力 > 300 的技能（实际 ${over.length} 个${over.length ? '：' + over.slice(0, 3).map((s) => s.name + '=' + s.dmgMax).join(', ') : ''}）`);
+
+const shanhuo = allSkills.find((s) => s.name === '山火');
+ok(!!shanhuo, '找得到「山火」');
+ok(shanhuo?.dmgMax === 15, `山火基础威力 15（实际 ${shanhuo?.dmgMax}）`);
+ok(shanhuo?.powerIsVariable === 1, '山火标记为可变威力');
+ok((shanhuo?.damage || []).length === 4, `山火的原始 damage 数组保留完整（${JSON.stringify(shanhuo?.damage)}）`);
+
+const frozen = allSkills.find((s) => s.name === '极寒领域');
+ok(frozen?.dmgMax === 105, `极寒领域基础威力 105（实际 ${frozen?.dmgMax}，数组 ${JSON.stringify(frozen?.damage)}）`);
+
+const variableCount = allSkills.filter((s) => s.powerIsVariable).length;
+ok(variableCount === 43, `可变威力技能 43 个（实际 ${variableCount}）`);
+
+// 页面上的「可变」标记
+api.skillDetail(shanhuo.id);
+const shHtml = A.byId.get('modalBody').innerHTML;
+ok(/可变/.test(shHtml), '技能详情里标出「可变」');
+ok(!/10000/.test(shHtml), '不再把数组里的哨兵值 10000 当威力显示');
+
 /* ============================================================
    2) 没有 bundle 时的 data/*.json 加载路径
    ============================================================ */

@@ -2547,5 +2547,226 @@
    7190520,
    "assets/f2bc7789ad9c_images_skills_118044.webp"
   ]
- ]
+ ],
+ "bloodlines": {
+  "1": {
+   "name": "普通系血脉",
+   "short": "普通",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_bloodline_icon_0105_1_img_putong_png.webp",
+   "item": "普通血脉秘药",
+   "itemIcon": "assets/f2bc7789ad9c_images_bloodline_grant_items_xuemai_putong.webp"
+  },
+  "2": {
+   "name": "草系血脉",
+   "short": "草",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_bloodline_icon_0106_2_img_cao_png.webp",
+   "item": "草系血脉秘药",
+   "itemIcon": "assets/f2bc7789ad9c_images_bloodline_grant_items_xuemai_cao.webp"
+  },
+  "3": {
+   "name": "火系血脉",
+   "short": "火",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_bloodline_icon_0107_3_img_huo_png.webp",
+   "item": "火系血脉秘药",
+   "itemIcon": "assets/f2bc7789ad9c_images_bloodline_grant_items_xuemai_huo.webp"
+  },
+  "4": {
+   "name": "水系血脉",
+   "short": "水",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_bloodline_icon_0108_4_img_shui_png.webp",
+   "item": "水系血脉秘药",
+   "itemIcon": "assets/f2bc7789ad9c_images_bloodline_grant_items_xuemai_shui.webp"
+  },
+  "5": {
+   "name": "光系血脉",
+   "short": "光",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_bloodline_icon_0109_5_img_guang_png.webp",
+   "item": "光系血脉秘药",
+   "itemIcon": "assets/f2bc7789ad9c_images_bloodline_grant_items_xuemai_guang.webp"
+  },
+  "6": {
+   "name": "地系血脉",
+   "short": "地",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_bloodline_icon_0110_6_img_yan_png.webp",
+   "item": "地系血脉秘药",
+   "itemIcon": "assets/f2bc7789ad9c_images_bloodline_grant_items_xuemai_yanshi.webp"
+  },
+  "7": {
+   "name": "冰系血脉",
+   "short": "冰",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_bloodline_icon_0111_7_img_xue_png.webp",
+   "item": "冰系血脉秘药",
+   "itemIcon": "assets/f2bc7789ad9c_images_bloodline_grant_items_xuemai_bing.webp"
+  },
+  "8": {
+   "name": "龙系血脉",
+   "short": "龙",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_bloodline_icon_0112_8_img_long_png.webp",
+   "item": "龙系血脉秘药",
+   "itemIcon": "assets/f2bc7789ad9c_images_bloodline_grant_items_xuemai_long.webp"
+  },
+  "9": {
+   "name": "电系血脉",
+   "short": "电",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_bloodline_icon_0113_9_img_dian_png.webp",
+   "item": "电系血脉秘药",
+   "itemIcon": "assets/f2bc7789ad9c_images_bloodline_grant_items_xuemai_dian.webp"
+  },
+  "10": {
+   "name": "毒系血脉",
+   "short": "毒",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_bloodline_icon_0114_10_img_du_png.webp",
+   "item": "毒系血脉秘药",
+   "itemIcon": "assets/f2bc7789ad9c_images_bloodline_grant_items_xuemai_du.webp"
+  },
+  "11": {
+   "name": "虫系血脉",
+   "short": "虫",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_bloodline_icon_0115_11_img_cong_png.webp",
+   "item": "虫系血脉秘药",
+   "itemIcon": "assets/f2bc7789ad9c_images_bloodline_grant_items_xuemai_chong.webp"
+  },
+  "12": {
+   "name": "武系血脉",
+   "short": "武",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_bloodline_icon_0116_12_img_wu_png.webp",
+   "item": "武系血脉秘药",
+   "itemIcon": "assets/f2bc7789ad9c_images_bloodline_grant_items_xuemai_wu.webp"
+  },
+  "13": {
+   "name": "翼系血脉",
+   "short": "翼",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_bloodline_icon_0117_13_img_yi_png.webp",
+   "item": "翼系血脉秘药",
+   "itemIcon": "assets/f2bc7789ad9c_images_bloodline_grant_items_xuemai_yi.webp"
+  },
+  "14": {
+   "name": "萌系血脉",
+   "short": "萌",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_bloodline_icon_0118_14_img_meng_png.webp",
+   "item": "萌系血脉秘药",
+   "itemIcon": "assets/f2bc7789ad9c_images_bloodline_grant_items_xuemai_meng.webp"
+  },
+  "15": {
+   "name": "幽系血脉",
+   "short": "幽",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_bloodline_icon_0119_15_img_youling_png.webp",
+   "item": "幽系血脉秘药",
+   "itemIcon": "assets/f2bc7789ad9c_images_bloodline_grant_items_xuemai_youling.webp"
+  },
+  "16": {
+   "name": "恶系血脉",
+   "short": "恶",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_bloodline_icon_0120_16_img_emo_png.webp",
+   "item": "恶系血脉秘药",
+   "itemIcon": "assets/f2bc7789ad9c_images_bloodline_grant_items_xuemai_emo.webp"
+  },
+  "17": {
+   "name": "机械系血脉",
+   "short": "机械",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_bloodline_icon_0121_17_img_jixie_png.webp",
+   "item": "机械血脉秘药",
+   "itemIcon": "assets/f2bc7789ad9c_images_bloodline_grant_items_xuemai_gang.webp"
+  },
+  "18": {
+   "name": "幻系血脉",
+   "short": "幻",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_bloodline_icon_0122_18_img_huan_png.webp",
+   "item": "幻系血脉秘药",
+   "itemIcon": "assets/f2bc7789ad9c_images_bloodline_grant_items_xuemai_huan.webp"
+  },
+  "19": {
+   "name": "首领血脉",
+   "short": "首领",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_bloodline_icon_0123_19_img_shouling_png.webp",
+   "item": null,
+   "itemIcon": null
+  }
+ },
+ "bloodlineSkillIcons": {
+  "7020370": "assets/f2bc7789ad9c_images_skills_700001.webp",
+  "7020640": "assets/f2bc7789ad9c_images_skills_700031.webp",
+  "7020790": "assets/f2bc7789ad9c_images_skills_703005.webp",
+  "7020880": "assets/f2bc7789ad9c_images_skills_101070.webp",
+  "7020910": "assets/f2bc7789ad9c_images_skills_101073.webp",
+  "7030170": "assets/f2bc7789ad9c_images_skills_703014.webp",
+  "7030220": "assets/f2bc7789ad9c_images_skills_703029.webp",
+  "7030320": "assets/f2bc7789ad9c_images_skills_102019.webp",
+  "7030330": "assets/f2bc7789ad9c_images_skills_703026.webp",
+  "7030430": "assets/f2bc7789ad9c_images_skills_102026.webp",
+  "7040150": "assets/f2bc7789ad9c_images_skills_704010.webp",
+  "7040260": "assets/f2bc7789ad9c_images_skills_704012.webp",
+  "7040300": "assets/f2bc7789ad9c_images_skills_704019.webp",
+  "7040360": "assets/f2bc7789ad9c_images_skills_103025.webp",
+  "7040370": "assets/f2bc7789ad9c_images_skills_103026.webp",
+  "7040450": "assets/f2bc7789ad9c_images_skills_103034.webp",
+  "7050170": "assets/f2bc7789ad9c_images_skills_703101.webp",
+  "7050230": "assets/f2bc7789ad9c_images_skills_705024.webp",
+  "7050270": "assets/f2bc7789ad9c_images_skills_703104.webp",
+  "7050330": "assets/f2bc7789ad9c_images_skills_104022.webp",
+  "7050340": "assets/f2bc7789ad9c_images_skills_104023.webp",
+  "7060140": "assets/f2bc7789ad9c_images_skills_706008.webp",
+  "7060200": "assets/f2bc7789ad9c_images_skills_105012.webp",
+  "7060210": "assets/f2bc7789ad9c_images_skills_105013.webp",
+  "7060230": "assets/f2bc7789ad9c_images_skills_105015.webp",
+  "7070010": "assets/f2bc7789ad9c_images_skills_720001.webp",
+  "7070110": "assets/f2bc7789ad9c_images_skills_106011.webp",
+  "7070130": "assets/f2bc7789ad9c_images_skills_106013.webp",
+  "7070170": "assets/f2bc7789ad9c_images_skills_106017.webp",
+  "7080110": "assets/f2bc7789ad9c_images_skills_708015.webp",
+  "7080120": "assets/f2bc7789ad9c_images_skills_708012.webp",
+  "7080200": "assets/f2bc7789ad9c_images_skills_708018.webp",
+  "7080280": "assets/f2bc7789ad9c_images_skills_107024.webp",
+  "7080400": "assets/f2bc7789ad9c_images_skills_107036.webp",
+  "7090160": "assets/f2bc7789ad9c_images_skills_709006.webp",
+  "7090240": "assets/f2bc7789ad9c_images_skills_108019.webp",
+  "7090250": "assets/f2bc7789ad9c_images_skills_108020.webp",
+  "7090350": "assets/f2bc7789ad9c_images_skills_108031.webp",
+  "7100120": "assets/f2bc7789ad9c_images_skills_710002.webp",
+  "7100150": "assets/f2bc7789ad9c_images_skills_710004.webp",
+  "7100170": "assets/f2bc7789ad9c_images_skills_710003.webp",
+  "7100210": "assets/f2bc7789ad9c_images_skills_109011.webp",
+  "7110190": "assets/f2bc7789ad9c_images_skills_711007.webp",
+  "7110250": "assets/f2bc7789ad9c_images_skills_110009.webp",
+  "7110280": "assets/f2bc7789ad9c_images_skills_310012.webp",
+  "7110300": "assets/f2bc7789ad9c_images_skills_110015.webp",
+  "7110310": "assets/f2bc7789ad9c_images_skills_110016.webp",
+  "7120120": "assets/f2bc7789ad9c_images_skills_712007.webp",
+  "7120190": "assets/f2bc7789ad9c_images_skills_111016.webp",
+  "7120200": "assets/f2bc7789ad9c_images_skills_111017.webp",
+  "7130180": "assets/f2bc7789ad9c_images_skills_713010.webp",
+  "7130220": "assets/f2bc7789ad9c_images_skills_212015.webp",
+  "7130260": "assets/f2bc7789ad9c_images_skills_112018.webp",
+  "7130270": "assets/f2bc7789ad9c_images_skills_112019.webp",
+  "7140100": "assets/f2bc7789ad9c_images_skills_113027.webp",
+  "7140140": "assets/f2bc7789ad9c_images_skills_714011.webp",
+  "7140230": "assets/f2bc7789ad9c_images_skills_113027.webp",
+  "7140240": "assets/f2bc7789ad9c_images_skills_113028.webp",
+  "7140280": "assets/f2bc7789ad9c_images_skills_113032.webp",
+  "7150150": "assets/f2bc7789ad9c_images_skills_715012.webp",
+  "7150190": "assets/f2bc7789ad9c_images_skills_114014.webp",
+  "7150210": "assets/f2bc7789ad9c_images_skills_114016.webp",
+  "7150300": "assets/f2bc7789ad9c_images_skills_114025.webp",
+  "7150310": "assets/f2bc7789ad9c_images_skills_114027.webp",
+  "7160130": "assets/f2bc7789ad9c_images_skills_716001.webp",
+  "7160200": "assets/f2bc7789ad9c_images_skills_716005.webp",
+  "7160230": "assets/f2bc7789ad9c_images_skills_115011.webp",
+  "7160240": "assets/f2bc7789ad9c_images_skills_115012.webp",
+  "7170090": "assets/f2bc7789ad9c_images_skills_705003.webp",
+  "7170150": "assets/f2bc7789ad9c_images_skills_705001.webp",
+  "7170200": "assets/f2bc7789ad9c_images_skills_116014.webp",
+  "7170220": "assets/f2bc7789ad9c_images_skills_116016.webp",
+  "7170250": "assets/f2bc7789ad9c_images_skills_116019.webp",
+  "7170260": "assets/f2bc7789ad9c_images_skills_116020.webp",
+  "7180080": "assets/f2bc7789ad9c_images_skills_718013.webp",
+  "7180160": "assets/f2bc7789ad9c_images_skills_718014.webp",
+  "7180210": "assets/f2bc7789ad9c_images_skills_317018.webp",
+  "7180260": "assets/f2bc7789ad9c_images_skills_117024.webp",
+  "7180270": "assets/f2bc7789ad9c_images_skills_117025.webp",
+  "7190210": "assets/f2bc7789ad9c_images_skills_719008.webp",
+  "7190280": "assets/f2bc7789ad9c_images_skills_719004.webp",
+  "7190360": "assets/f2bc7789ad9c_images_skills_118018.webp",
+  "7190380": "assets/f2bc7789ad9c_images_skills_118020.webp",
+  "7190400": "assets/f2bc7789ad9c_images_skills_118022.webp"
+ }
 }

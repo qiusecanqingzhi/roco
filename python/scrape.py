@@ -237,10 +237,12 @@ def skill_row(s: dict, by_id: dict) -> dict:
         "battle_type_id": s.get("battle_type_id") or "",
         "battle_type": by_id.get(s.get("battle_type_id"), {}).get("name", "") if s.get("battle_type_id") else "",
         "energy_cost": s.get("energy_cost", ""),
-        "damage_min": min(dmg) if dmg else "",
-        "damage_max": max(dmg) if dmg else "",
+        # damage[0] 才是基础威力；damage[1..] 是附加状态/阈值/上限哨兵
+        # （如极寒领域 [105,1,20580010,...]，取 min/max 会得出 0~20580010，是错的）
+        "damage_min": dmg[0] if dmg else "",
+        "damage_max": dmg[0] if dmg else "",
         "damage": dmg,
-        "power_is_variable": s.get("power_is_variable"),
+        "power_is_variable": 1 if s.get("power_is_variable") else 0,
         "energy_is_variable": s.get("energy_is_variable"),
         "cooldown_min": cd[0] if len(cd) > 0 else "",
         "cooldown_max": cd[1] if len(cd) > 1 else "",
@@ -392,6 +394,7 @@ def build_sqlite(path: Path, locale: str, data: dict):
       locale TEXT, id INT, name TEXT, category TEXT, damage_type TEXT, battle_type TEXT,
       energy_cost INT, damage_min INT, damage_max INT, cooldown_min INT, cooldown_max INT,
       is_passive INT, used_by_petbase_count INT, learner_count INT, description TEXT, image_url TEXT,
+      power_is_variable INT,
       PRIMARY KEY(locale, id));
     CREATE TABLE IF NOT EXISTS spirit_skill(
       locale TEXT, handbook_id INT, form_id INT, spirit_name TEXT, skill_id INT, skill_name TEXT,
@@ -443,7 +446,7 @@ def build_sqlite(path: Path, locale: str, data: dict):
                    "image_url", "head_image_url", "portrait_small_url", "detail_url"],
         "skill": ["id", "name", "category", "damage_type", "battle_type", "energy_cost", "damage_min",
                   "damage_max", "cooldown_min", "cooldown_max", "is_passive", "used_by_petbase_count",
-                  "learner_count", "description", "image_url"],
+                  "learner_count", "description", "image_url", "power_is_variable"],
         "spirit_skill": ["handbook_id", "form_id", "spirit_name", "skill_id", "skill_name", "source_type",
                          "source_order", "unlock_level", "category", "damage_type", "description"],
         "skill_learner": ["skill_id", "skill_name", "handbook_id", "form_id", "spirit_name", "form",
@@ -530,7 +533,7 @@ def build_sqlite(path: Path, locale: str, data: dict):
 
     skill_cols = ["id", "name", "category", "damage_type", "battle_type", "energy_cost", "damage_min",
                   "damage_max", "cooldown_min", "cooldown_max", "is_passive", "used_by_petbase_count",
-                  "learner_count", "description", "image_url"]
+                  "learner_count", "description", "image_url", "power_is_variable"]
     ins("skill", skill_cols, data.get("skills", []))
 
     # spirit_skill 带 form_id（行在解析时就带上了），CSV 里也保留这一列

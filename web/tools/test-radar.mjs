@@ -167,8 +167,14 @@ ok((blHtml.match(/class="bl-icon"/g) || []).length === 6, `默认显示 6 行（
 ok((blHtml.match(/class="bl-item"/g) || []).length === 6, '每行显示秘药图标');
 ok(/徒长/.test(blHtml) && /引燃/.test(blHtml), '给出了血脉技能名（徒长/引燃）');
 ok(/data-skill="7020880"/.test(blHtml), '血脉技能可点开技能详情');
-ok(bl[0].skill === '拍击' && bl[0].lv === 15, `首条血脉：${bl[0].name} -> ${bl[0].skill} Lv${bl[0].lv}`);
-ok(bl.every((x) => x.icon && x.skillId && x.skill), '18 条血脉都有图标与技能');
+const blMeta = api.STATE.data.meta.bloodlines ?? {};
+const blSkillIcons = api.STATE.data.meta.bloodlineSkillIcons ?? {};
+ok(bl[0].skill === '拍击' && bl[0].lv === 15, `首条血脉：${blMeta[bl[0].id]?.name} -> ${bl[0].skill} Lv${bl[0].lv}`);
+// 图标/名称/秘药已按 bloodline_id 去重到 meta 里（每行只留 id/skillId/skill/lv）
+ok(bl.every((x) => blMeta[x.id]?.icon && (x.skillId ? blSkillIcons[x.skillId] : true)),
+  '18 条血脉都能从 meta 查到图标与技能图标');
+ok(bl.every((b) => !('icon' in b) && !('item' in b)),
+  '血脉行里不再重复存图标路径（体积优化：6.1 MB -> 3.3 MB）');
 
 // 展开状态
 api.STATE.expandedBloodlines = true;
@@ -185,7 +191,7 @@ ok(blOther[0].skill !== bl[0].skill, `同一种血脉不同精灵给的技能不
 
 // 有的精灵多一条「首领血脉」且不给技能，界面必须能显示而不报错
 const boss = blOther.find((x) => !x.skillId);
-ok(!!boss, `存在不给技能的血脉：${boss?.name ?? '(没找到)'}`);
+ok(!!boss, `存在不给技能的血脉：${blMeta[boss?.id]?.name ?? '(没找到)'}`);
 api.STATE.expandedBloodlines = true;   // 它在第 19 位，默认折叠时看不到
 api.spiritDetail('1:1');
 const bossHtml = ids.get('modalBody').innerHTML;
@@ -213,6 +219,29 @@ ok(at('技能石') > 0 && at('血脉技能') > at('技能石'),
 ok(at('升级学会') < at('技能石'), '顺序为 升级学会 → 技能石 → 血脉技能');
 // 血脉技能行里要有技能图标
 ok(/class="skill-icon"/.test(orderHtml) && /data-skill="7020880"/.test(orderHtml), '血脉技能行带技能图标且可点开');
+
+/* ---------------------------------------------------------- 传说技能 */
+// source_type=legendary 的技能只有 7 只精灵有，早先模板没渲染这一桶、被静默丢弃。
+console.log('\n· 传说技能');
+const legendSpirits = Object.entries(api.STATE.data.spiritSkills)
+  .filter(([, list]) => list.some((r) => r.src === 'legendary'))
+  .map(([k]) => k);
+ok(legendSpirits.length === 7, `有传说技能的精灵 7 只（实际 ${legendSpirits.length}）`);
+const lk = legendSpirits[0];
+api.spiritDetail(lk);
+const lHtml = ids.get('modalBody').innerHTML;
+ok(/传说技能/.test(lHtml), `详情里出现「传说技能」区块（${lk}）`);
+const expectName = api.STATE.data.spiritSkills[lk].find((r) => r.src === 'legendary');
+ok(new RegExp(api.STATE.bySkill.get(expectName.id).name).test(lHtml),
+  `该区块列出了 ${api.STATE.bySkill.get(expectName.id).name}`);
+// 每只都渲染得出来，且不出现 undefined
+let legendBad = 0;
+for (const k of legendSpirits) {
+  api.spiritDetail(k);
+  const h = ids.get('modalBody').innerHTML;
+  if (!/传说技能/.test(h) || /undefined/.test(h)) legendBad++;
+}
+ok(legendBad === 0, `7 只精灵的传说技能都能渲染（异常 ${legendBad}）`);
 
 console.log('');
 if (problems.length) {

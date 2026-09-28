@@ -287,8 +287,16 @@ function spiritRow(d, typeById) {
 }
 
 // 技能 -> 扁平记录
+//
+// 关于 damage 数组（踩过坑，务必看清）：
+//   damage[0] 才是技能的基础威力（全库范围 0~240，全部合理）；
+//   damage[1..] 是附加状态/阈值/哨兵值，可能是 0、1、负数，甚至 20580010
+//   这种"上限哨兵"（如极寒领域 [105,1,20580010,0,60,0,1]）。
+//   早先版本对整个数组取 min/max，于是把 20580010 当成威力显示出来 —— 错的。
+//   power_is_variable 为真的技能，页面显示"基础威力 N / 可变"。
 function skillRow(s, typeById) {
   const dmg = Array.isArray(s.damage) ? s.damage : [];
+  const power = dmg.length ? dmg[0] : '';
   return {
     id: s.id,
     name: norm(s.name),
@@ -298,10 +306,11 @@ function skillRow(s, typeById) {
     battle_type_id: s.battle_type_id ?? '',
     battle_type: s.battle_type_id != null ? typeById.get(s.battle_type_id)?.name ?? '' : '',
     energy_cost: s.energy_cost ?? '',
-    damage_min: dmg.length ? Math.min(...dmg) : '',
-    damage_max: dmg.length ? Math.max(...dmg) : '',
+    // damage_min/max 保留"基础威力"语义，两者相同；范围另有 damage 数组备查
+    damage_min: power,
+    damage_max: power,
     damage: dmg,
-    power_is_variable: s.power_is_variable,
+    power_is_variable: s.power_is_variable ? 1 : 0,
     energy_is_variable: s.energy_is_variable,
     cooldown_min: Array.isArray(s.cooldown) ? s.cooldown[0] : '',
     cooldown_max: Array.isArray(s.cooldown) ? s.cooldown[1] : '',
@@ -758,6 +767,7 @@ const CREATE_SQL = {
       battle_type TEXT, energy_cost INT, damage_min INT, damage_max INT,
       cooldown_min INT, cooldown_max INT, is_passive INT,
       used_by_petbase_count INT, learner_count INT, description TEXT, image_url TEXT,
+      power_is_variable INT,
       PRIMARY KEY (locale, id))`,
   spirit_skill: `CREATE TABLE IF NOT EXISTS spirit_skill (
       locale TEXT, handbook_id INT, form_id INT, spirit_name TEXT,
@@ -803,6 +813,7 @@ const COLUMN_TYPE = {
   type_count: 'INT', types: 'TEXT', seat: 'INT', skills: 'TEXT', note_id: 'INT',
   used_by_skill_count: 'INT', used_by_skills: 'TEXT', icon_key: 'TEXT',
   source_order: 'INT', display_order: 'INT', image_url: 'TEXT',
+  power_is_variable: 'INT',
   bloodline_id: 'INT', bloodline_name: 'TEXT', bloodline_short: 'TEXT', bloodline_icon: 'TEXT',
   grant_item: 'TEXT', grant_item_icon: 'TEXT', skill_name: 'TEXT', skill_icon: 'TEXT',
   unlock_level: 'INT',
@@ -850,6 +861,7 @@ async function buildSqlite(file, locale, data) {
     skill: [
       'locale', 'id', 'name', 'category', 'damage_type', 'battle_type', 'energy_cost', 'damage_min', 'damage_max',
       'cooldown_min', 'cooldown_max', 'is_passive', 'used_by_petbase_count', 'learner_count', 'description', 'image_url',
+      'power_is_variable',
     ],
     spirit_skill: [
       'locale', 'handbook_id', 'form_id', 'spirit_name', 'skill_id', 'skill_name', 'source_type',

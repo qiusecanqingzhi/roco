@@ -104,6 +104,14 @@ const typeName = (id) => STATE.typeById.get(id)?.name ?? '';
 const typeShort = (id) => STATE.typeById.get(id)?.short ?? typeName(id);
 const typeColor = (id) => STATE.typeById.get(id)?.color ?? '#7a8699';
 
+/** 威力显示：基础威力 + 可变标记
+ *  damage 数组的 [0] 才是基础威力；[1..] 是附加状态/阈值/上限哨兵，
+ *  所以不能对数组取 min/max（早先版本因此把 20580010 当成威力显示，已修）。 */
+const powerCell = (s) => {
+  const p = s.dmgMax ?? '';
+  return `${p}${s.powerIsVariable ? ' <span class="pill" title="威力可变，基础威力 ' + p + '，实际随效果变化">可变</span>' : ''}`;
+};
+
 /** 技能图标（本地优先，回退在线）；索引是 [[id, path], …] 数组，构建时转 Map */
 const skillIconOf = (id) => {
   const local = STATE.skillIconById.get(id);
@@ -171,12 +179,13 @@ const plainDesc = (s) => String(s ?? '')
   .replace(/<[^<>]{1,80}>/g, '');
 
 // 精灵的技能：level 按解锁等级，machine 按名字；被动单列。
-// 没有 blood 桶：源数据 spirit_skill 的 source_type 只有 level/machine/passive/legendary，
-// 血脉技能在 spirit_bloodlines 里，由 bloodlineSection() 单独渲染。（`bucket` 那行是兜底，
-// 万一上游以后新增了别的 source_type 也不会丢数据。）
+// 注意 source_type 实际有四种：level / machine / passive / legendary。
+// legendary（传说技能）只有 7 只精灵有，之前模板没渲染这一桶，被静默丢了 —— 已补上。
+// 另外 blood 不存在（血脉技能在 spirit_bloodlines，由 bloodlineSection() 渲染）。
+// `bucket` 那行是兜底：万一上游以后新增 source_type，也不会丢数据。
 function spiritSkillsOf(sp) {
   const raw = STATE.data.spiritSkills[`${sp.id}:${sp.formId}`] ?? [];
-  const out = { level: [], machine: [], passive: [] };
+  const out = { level: [], machine: [], legendary: [], passive: [] };
   for (const r of raw) {
     const sk = STATE.bySkill.get(r.id);
     if (!sk) continue;
@@ -185,6 +194,7 @@ function spiritSkillsOf(sp) {
   }
   out.level.sort((a, b) => (a.lv ?? 999) - (b.lv ?? 999) || (a.name > b.name ? 1 : -1));
   out.machine.sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+  out.legendary.sort((a, b) => a.name.localeCompare(b.name, 'zh'));
   return out;
 }
 
@@ -376,7 +386,7 @@ function viewSkills() {
         <tr class="clickable" data-skill="${s.id}">
           <td class="mid">${imgTag(s.img, s.imgOnline, s.name, 'skill-icon')}</td>
           <td class="skill-name">${esc(s.name)}</td>
-          <td class="num">${s.dmgMax ?? ''}${s.dmgMin !== s.dmgMax && s.dmgMin != null ? `<span class="desc"> (${s.dmgMin}~)</span>` : ''}</td>
+          <td class="num">${powerCell(s)}</td>
           <td class="num">${s.energy ?? ''}</td>
           <td class="mid">${catPill(s.cat)}</td>
           <td class="mid">${s.typeId ? badge(s.typeId) : ''}</td>
@@ -553,16 +563,24 @@ function bloodlineSection(sp) {
   if (!list.length) return '';
   const expanded = !!STATE.expandedBloodlines;
   const shown = expanded ? list : list.slice(0, BLOODLINE_PREVIEW);
-  const rows = shown.map((b) => `
+  const meta = STATE.data.meta.bloodlines ?? {};
+  const skillIcons = STATE.data.meta.bloodlineSkillIcons ?? {};
+  // 行的图标/名称/秘药都从 meta 按 bloodline_id 查（导出时做了去重，省 2 MB+）
+  const rows = shown.map((b) => {
+    const m = meta[b.id] ?? {};
+    const icon = m.icon, itemIcon = m.itemIcon, item = m.item;
+    const sIcon = b.skillId ? skillIcons[b.skillId] : null;
+    return `
     <tr>
-      <td class="mid">${b.icon ? `<span class="bl-icon">${imgTag(b.icon, null, b.name)}</span>` : ''}</td>
-      <td>${esc(b.name)}</td>
-      <td class="mid">${b.skillIcon ? imgTag(b.skillIcon, null, b.skill ?? '', 'skill-icon') : ''}</td>
+      <td class="mid">${icon ? `<span class="bl-icon">${imgTag(icon, null, m.name ?? '')}</span>` : ''}</td>
+      <td>${esc(m.name ?? '')}</td>
+      <td class="mid">${sIcon ? imgTag(sIcon, null, b.skill ?? '', 'skill-icon') : ''}</td>
       <td class="skill-name">${b.skillId ? `<span class="clickable-inline" data-skill="${b.skillId}">${esc(b.skill)}</span>` : '<span class="desc">—</span>'}</td>
       <td class="num">${b.lv ?? '—'}</td>
       <td class="mid">${b.skillId ? badge(STATE.bySkill.get(b.skillId)?.typeId) : ''}</td>
-      <td class="mid">${b.itemIcon ? `<span class="bl-item" title="${esc(b.item ?? '')}">${imgTag(b.itemIcon, null, b.item ?? '')}</span>` : esc(b.item ?? '')}</td>
-    </tr>`).join('');
+      <td class="mid">${itemIcon ? `<span class="bl-item" title="${esc(item ?? '')}">${imgTag(itemIcon, null, item ?? '')}</span>` : esc(item ?? '')}</td>
+    </tr>`;
+  }).join('');
 
   const withSkill = list.filter((b) => b.skillId).length;
   return `<div class="section">
@@ -606,7 +624,7 @@ function spiritDetail(key, lvFromSkillId = null) {
           <td class="mid">${skillIconTag(s.id)}</td>
           ${withLv ? `<td class="num">${s.lv ?? '—'}</td>` : ''}
           <td class="skill-name">${esc(s.name)}${lvFromSkillId === s.id ? ' <span class="pill">当前</span>' : ''}</td>
-          <td class="num">${s.dmgMax ?? ''}</td><td class="num">${s.energy ?? ''}</td>
+          <td class="num">${powerCell(s)}</td><td class="num">${s.energy ?? ''}</td>
           <td class="mid">${catPill(s.cat)}</td><td class="mid">${s.typeId ? badge(s.typeId) : ''}</td>
           <td class="desc">${glossaryTag(s.desc)}</td></tr>`).join('')}</tbody>
     </table></div>` : '<div class="desc">无</div>';
@@ -639,6 +657,7 @@ function spiritDetail(key, lvFromSkillId = null) {
     ${evo ? `<div class="section"><h3>进化链</h3><div class="evo">${evo}</div></div>` : ''}
 
     <div class="section"><h3>升级学会 <span class="n">${skills.level.length}</span></h3>${skillTable(skills.level, true)}</div>
+    ${skills.legendary.length ? `<div class="section"><h3>传说技能 <span class="n">${skills.legendary.length}</span></h3>${skillTable(skills.legendary, false)}</div>` : ''}
     ${skills.machine.length ? `<div class="section"><h3>技能石 <span class="n">${skills.machine.length}</span></h3>${skillTable(skills.machine, false)}</div>` : ''}
 
     ${bloodlineSection(sp)}
@@ -731,7 +750,7 @@ function skillDetail(skillId, ownerKey = null) {
         <h2>${esc(sk.name)}</h2>
         <div class="trow" style="margin:8px 0">${sk.typeId ? badge(sk.typeId) : ''}${catPill(sk.cat)}</div>
         <div class="kv" style="margin-top:10px">
-          <span class="k">威力</span><span class="v">${sk.dmgMin === sk.dmgMax ? (sk.dmgMax ?? '—') : `${sk.dmgMin} ~ ${sk.dmgMax}`}</span>
+          <span class="k">威力</span><span class="v">${sk.dmgMax ?? '—'}${sk.powerIsVariable ? ' <span class="pill">可变</span>（基础威力，实际随效果变化）' : ''}</span>
           <span class="k">能耗</span><span class="v">${sk.energy ?? '—'}</span>
           <span class="k">冷却</span><span class="v">${sk.cdMin === sk.cdMax ? (sk.cdMin ?? '—') : `${sk.cdMin} ~ ${sk.cdMax}`}</span>
           <span class="k">学习途径</span><span class="v">${esc((sk.src || '').split(' / ').map((x) => SRC_LABEL[x] ?? x).join('、') || '—')}</span>
