@@ -27,6 +27,7 @@ const KEYS = {
   team_member: ['team_id', 'seat'],
   glossary: ['note_id'],
   stat_icons: ['stat'],
+  passive_skill: ['handbook_id', 'form_id'],
 };
 
 const A = new DatabaseSync(A_PATH);

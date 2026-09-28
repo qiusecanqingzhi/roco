@@ -73,25 +73,33 @@ ok((svg.match(/class="radar-ring"/g) || []).length === 4, `四圈网格（实际
 ok((svg.match(/class="radar-dot/g) || []).length === 6, '六个数据顶点');
 
 console.log('\n· 外侧标签（图标 + 数值）');
+// 顺序必须与原站一致：正上方顺时针 生命 → 魔攻 → 魔防 → 速度 → 物防 → 物攻
+// （果实立方人：105 / 50 / 98 / 95 / 120 / 132）
+const EXPECT_ORDER = [105, 50, 98, 95, 120, 132];
+const EXPECT_LABELS = ['生命', '魔攻', '魔防', '速度', '物防', '物攻'];
 const hasIcons = /class="radar-icon"/.test(svg);
 if (hasIcons) {
   ok((svg.match(/class="radar-icon"/g) || []).length === 6, '六个维度图标（当 CSS mask 用）');
   ok((svg.match(/--tint:\d+%/g) || []).length === 6, '每个图标带按数值算出的染色比例 --tint');
   ok(/mask-image:url\('assets\//.test(svg), 'mask 指向本地 assets 图片');
-  // 数值仍然以文字呈现，且六个都在
   const vals = [...svg.matchAll(/class="radar-val"[^>]*>(\d+)</g)].map((m) => Number(m[1]));
   ok(vals.length === 6, `六个数值文字（实际 ${vals.length}）`);
-  ok(vals.join(',') === '105,132,50,120,98,95', `数值与数据一致：${vals.join(',')}`);
-  // 染色比例：生命 105/200 = 52%
+  ok(vals.join(',') === EXPECT_ORDER.join(','),
+    `数值顺序与原站一致：${vals.join(',')}（期望 ${EXPECT_ORDER.join(',')}）`);
+  // 染色比例跟随数值：生命 105/200=52%、魔攻 50/180=28%、物攻 132/180=73%
   const tints = [...svg.matchAll(/--tint:(\d+)%/g)].map((m) => Number(m[1]));
-  ok(Math.abs(tints[0] - 52) <= 1, `生命染色比例 ≈52%（实际 ${tints[0]}%）`);
-  ok(tints[2] < tints[1], `魔攻(50) 染色比物攻(132) 更淡（${tints[2]}% < ${tints[1]}%）`);
+  ok(Math.abs(tints[0] - 52) <= 1, `生命染色 ≈52%（实际 ${tints[0]}%）`);
+  ok(tints[1] < tints[5], `魔攻(50) 染色比物攻(132) 更淡（${tints[1]}% < ${tints[5]}%）`);
 } else {
   ok((svg.match(/class="radar-label"/g) || []).length === 6, '无图标时退回六个文字标签');
 }
-for (const label of ['生命', '物攻', '魔攻', '物防', '魔防', '速度']) {
+for (const label of EXPECT_LABELS) {
   ok(svg.includes(`aria-label="六维种族值雷达图：`) && svg.includes(`${label} `), `无障碍标签含「${label}」`);
 }
+// aria 里的顺序也要对
+const ariaSeq = /aria-label="六维种族值雷达图：([^"]+)"/.exec(svg)?.[1] ?? '';
+ok(ariaSeq.split('，').map((x) => x.split(' ')[0]).join(',') === EXPECT_LABELS.join(','),
+  `无障碍标签顺序一致：${ariaSeq.split('，').map((x) => x.split(' ')[0]).join(',')}`);
 
 console.log('\n· 几何');
 const pts = parsePoints(svg);
@@ -100,13 +108,13 @@ ok(Array.isArray(pts) && pts.length === 6, `数据多边形有 6 个顶点（实
 const C = 120;                        // viewBox 240 -> 圆心 120
 const dist = ([x, y]) => Math.hypot(x - C, y - C);
 if (pts) {
-  // 第 1 个点是“生命”，向上（y 更小）；值 105/200 = 0.525R
+  // 第 1 个点是「生命」（向上）；第 2 个是「魔攻」（右上），值 50 应比第 6 个「物攻」132 更靠内
   const R = 78;
   const expect = R * (105 / 200);
   ok(Math.abs(dist(pts[0]) - expect) < 1.5, `生命顶点半径 ≈ ${expect.toFixed(1)}（实际 ${dist(pts[0]).toFixed(1)}）`);
   ok(pts[0][1] < C, '生命顶点在圆心上方（第一轴朝向正确）');
-  // 魔攻 50/180 应比 物攻 132/180 更靠内
-  ok(dist(pts[2]) < dist(pts[1]), '魔攻(50) 比 物攻(132) 更靠内 —— 数值越大越外');
+  ok(pts[1][0] > C && pts[1][1] < C, '第二轴（魔攻）在右上方 —— 顺时针排列');
+  ok(dist(pts[1]) < dist(pts[5]), '魔攻(50) 比 物攻(132) 更靠内 —— 数值越大越外');
 }
 
 // 极端值：全 0 与超高
@@ -118,6 +126,33 @@ const pts0 = parsePoints(svg0);
 ok(pts0 && pts0.length === 6 && pts0.every((p) => dist(p) > 3), '全 0 时六个顶点仍在圆心外（不塌陷）');
 ok(pts0 && new Set(pts0.map((p) => p.map((x) => x.toFixed(1)).join(','))).size === 6, '全 0 时六个顶点位置互不相同（能看出是哪一项）');
 api.STATE.bySpirit.delete('9999:1');
+
+/* ---------------------------------------------------------- 图标类需求 */
+console.log('\n· 特性 / 技能 / 系别图标');
+api.spiritDetail('466:1');
+const detail = ids.get('modalBody').innerHTML;
+ok(/class="passive-icon"/.test(detail), '特性（被动技能）旁显示图标');
+ok(/passive-icon"[^>]*>\s*<img[^>]+src="assets\//.test(detail), '特性图标指向本地 assets');
+const skillIconsInDetail = (detail.match(/class="skill-icon"/g) || []).length;
+ok(skillIconsInDetail >= 13, `精灵详情的技能表每行都有图标（${skillIconsInDetail} 个）`);
+ok(/class="tbadge-img"/.test(detail), '系别改成圆形图标徽章');
+ok(/class="type-icon"/.test(detail), '系别徽章内是 img 图标');
+
+// 技能详情：可学精灵列表带头像
+const firstSkill = api.spiritSkillsOf(api.STATE.bySpirit.get('466:1')).level[0];
+api.skillDetail(firstSkill.id);
+const skDetail = ids.get('modalBody').innerHTML;
+ok((skDetail.match(/class="spirit-head"/g) || []).length > 0, '技能详情的可学精灵列表显示头像');
+ok(/class="type-icon"/.test(skDetail), '技能详情的系别列也是图标');
+
+// 系别页：矩阵表头有图标
+api.STATE.view = 'types';
+// 直接调用内部渲染（通过 hash 路由无法在桩里完整模拟，这里用钩子里的 render）
+ids.get('app').innerHTML = '';
+api.render();
+const typesHtml = ids.get('app').innerHTML;
+ok(/class="type-icon"/.test(typesHtml), '系别克制页的表头用图标徽章');
+ok((typesHtml.match(/<td class="mx/g) || []).length === 324, '克制矩阵仍是 324 格');
 
 console.log('');
 if (problems.length) {

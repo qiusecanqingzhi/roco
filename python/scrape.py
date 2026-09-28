@@ -418,6 +418,9 @@ def build_sqlite(path: Path, locale: str, data: dict):
     CREATE TABLE IF NOT EXISTS stat_icons(
       locale TEXT, stat TEXT, label TEXT, display_order INT, image_url TEXT,
       PRIMARY KEY(locale, stat));
+    CREATE TABLE IF NOT EXISTS passive_skill(
+      locale TEXT, handbook_id INT, form_id INT, skill_id INT, name TEXT, desc TEXT, image_url TEXT,
+      PRIMARY KEY(locale, handbook_id, form_id));
     CREATE INDEX IF NOT EXISTS idx_ss ON spirit_skill(locale, handbook_id);
     CREATE INDEX IF NOT EXISTS idx_sl ON skill_learner(locale, skill_id);
     CREATE INDEX IF NOT EXISTS idx_tm ON team_member(locale, team_id);
@@ -553,6 +556,8 @@ def build_sqlite(path: Path, locale: str, data: dict):
     ins("glossary", g_cols, data.get("glossary", []))
     si_cols = ["stat", "label", "display_order", "image_url"]
     ins("stat_icons", si_cols, data.get("stat_icons", []))
+    ps_cols = ["handbook_id", "form_id", "skill_id", "name", "desc", "image_url"]
+    ins("passive_skill", ps_cols, data.get("passive_skills", []))
 
     db.commit()
     db.close()
@@ -613,7 +618,7 @@ def main(argv=None):
     by_id = index_types(types_payload)
 
     data = {"spirits": [], "skills": [], "spirit_skills": [], "skill_learners": [], "types": [], "matchups": [],
-            "teams": [], "team_members": [], "glossary": [], "stat_icons": []}
+            "teams": [], "team_members": [], "glossary": [], "stat_icons": [], "passive_skills": []}
     summary = {"locale": locale, "catalog_version": ver, "parts": {}}
 
     # ---- 精灵 --------------------------------------------------------
@@ -665,6 +670,17 @@ def main(argv=None):
         write_table(out_dir, "spirit_skills", data["spirit_skills"])
         if data["stat_icons"]:
             write_table(out_dir, "stat_icons", data["stat_icons"])
+        # 被动技能（特性）：带上图标地址，详情页要在特性说明旁显示
+        data["passive_skills"] = [{
+            "handbook_id": d.get("handbook_id"),
+            "form_id": d.get("form_id"),
+            "skill_id": p.get("id"),
+            "name": p.get("name"),
+            "desc": p.get("description") or "",
+            "image_url": ORIGIN + p["image_url"] if p.get("image_url") else "",
+        } for d in details for p in (d.get("passive_skills") or [])]
+        if data["passive_skills"]:
+            write_table(out_dir, "passive_skills", data["passive_skills"])
         summary["parts"]["spirits"] = {"count": len(data["spirits"]), "with_detail": len(details)}
 
     # ---- 技能 --------------------------------------------------------

@@ -455,6 +455,7 @@ async function main() {
   let teamMemberList = [];
   let glossaryList = [];
   let statIcons = [];
+  let passiveSkillRows = [];
   const typeById = makeTypeIndex({ types: await fetcher.getJson(`${S}/types.json`) });
   typesData = await fetcher.getJson(`${S}/types.json`);
 
@@ -481,6 +482,9 @@ async function main() {
     spiritSkillLinks = spiritsDetail.flatMap((d) => spiritSkillRows(d, typeById));
 
     // 形态（同一 handbook_id 的其它 form）
+    // 注意：形态详情要并进 allDetails，否则依赖"全部详情"的派生数据
+    // （被动技能图标等）会漏掉它们 —— 踩过一次：Node 版少了 155 行。
+    let allDetails = spiritsDetail;
     const extras = (manifest.spirit_forms ?? []).filter((f) => !f.is_default);
     if (extras.length) {
       process.stderr.write(`· 精灵形态 ${extras.length} 个\n`);
@@ -492,15 +496,14 @@ async function main() {
           throw e;
         }
       });
-      const formsRows = fdetails.filter(Boolean).map((d) => spiritRow(d, typeById));
-      spiritsRows = spiritsRows.concat(formsRows);
-      spiritSkillLinks = spiritSkillLinks.concat(
-        fdetails.filter(Boolean).flatMap((d) => spiritSkillRows(d, typeById)),
-      );
+      const okForms = fdetails.filter(Boolean);
+      allDetails = spiritsDetail.concat(okForms);
+      spiritsRows = spiritsRows.concat(okForms.map((d) => spiritRow(d, typeById)));
+      spiritSkillLinks = spiritSkillLinks.concat(okForms.flatMap((d) => spiritSkillRows(d, typeById)));
     }
 
     // 六维图标：每只精灵的详情里都带同一份，取第一只有的即可
-    const withIcons = spiritsDetail.find((d) => d.stat_icons?.length);
+    const withIcons = allDetails.find((d) => d.stat_icons?.length);
     statIcons = (withIcons?.stat_icons ?? []).map((x, i) => ({
       stat: x.stat,
       label: x.label,
@@ -508,9 +511,23 @@ async function main() {
       image_url: x.image_url ? ORIGIN + x.image_url : '',
     }));
 
+    // 被动技能（特性）：带上图标地址，详情页要在特性说明旁显示。
+    // 用 allDetails（含形态），不要只用 spiritsDetail。
+    passiveSkillRows = allDetails.flatMap((d) =>
+      (d.passive_skills ?? []).map((p) => ({
+        handbook_id: d.handbook_id,
+        form_id: d.form_id,
+        skill_id: p.id,
+        name: p.name,
+        desc: p.description ?? '',
+        image_url: p.image_url ? ORIGIN + p.image_url : '',
+      })),
+    );
+
     writeTable(outDir, 'spirits', spiritsRows);
     writeTable(outDir, 'spirit_skills', spiritSkillLinks);
     if (statIcons.length) writeTable(outDir, 'stat_icons', statIcons);
+    if (passiveSkillRows.length) writeTable(outDir, 'passive_skills', passiveSkillRows);
     result.parts.spirits = { count: spiritsRows.length, with_detail: spiritsDetail.length };
   }
 
@@ -667,6 +684,7 @@ async function main() {
         teamMemberList,
         glossaryList,
         statIcons,
+        passiveSkillRows,
       });
       process.stderr.write('· 已写入 out/roco.sqlite\n');
     } catch (e) {
@@ -742,6 +760,10 @@ const CREATE_SQL = {
   stat_icons: `CREATE TABLE IF NOT EXISTS stat_icons (
       locale TEXT, stat TEXT, label TEXT, display_order INT, image_url TEXT,
       PRIMARY KEY (locale, stat))`,
+  // 被动技能（特性）：站点在特性说明旁显示一张技能图标
+  passive_skill: `CREATE TABLE IF NOT EXISTS passive_skill (
+      locale TEXT, handbook_id INT, form_id INT, skill_id INT, name TEXT, desc TEXT, image_url TEXT,
+      PRIMARY KEY (locale, handbook_id, form_id))`,
 };
 const COLUMN_TYPE = {
   type_count: 'INT', types: 'TEXT', seat: 'INT', skills: 'TEXT', note_id: 'INT',
@@ -758,6 +780,7 @@ const PK = {
   team_member: [],
   glossary: ['locale', 'note_id'],
   stat_icons: ['locale', 'stat'],
+  passive_skill: ['locale', 'handbook_id', 'form_id'],
   type: ['locale', 'id'],
   type_matchup: ['locale', 'attacking_type_id', 'defending_type_id'],
 };
@@ -802,6 +825,9 @@ async function buildSqlite(file, locale, data) {
       'locale', 'team_id', 'team_name', 'seat', 'handbook_id', 'petbase_id', 'name', 'form', 'types',
       'variant', 'bloodline', 'item',
     ],
+    passive_skill: [
+      'locale', 'handbook_id', 'form_id', 'skill_id', 'name', 'desc', 'image_url',
+    ],
     glossary: [
       'locale', 'note_id', 'note', 'description', 'used_by_skill_count', 'used_by_skills', 'icon_key',
     ],
@@ -816,6 +842,7 @@ async function buildSqlite(file, locale, data) {
     skill_learner: tables.skill_learner, team: tables.team, team_member: tables.team_member,
     glossary: tables.glossary,
     stat_icons: tables.stat_icons,
+    passive_skill: tables.passive_skill,
     type: ['locale', 'id', 'name', 'short_name', 'color', 'status_immunities'],
     type_matchup: ['locale', 'attacking_type_id', 'defending_type_id', 'effect'],
   };
@@ -884,7 +911,11 @@ async function buildSqlite(file, locale, data) {
     );
   }
 
-  // 队伍 / 术语 / 六维图标
+  // 队伍 / 术语 / 六维图标 / 被动技能
+  if (data.passiveSkillRows?.length) {
+    const stP = replaceLocale('passive_skill', tables.passive_skill);
+    for (const r of data.passiveSkillRows) stP.run(...tables.passive_skill.map((c) => (c === 'locale' ? locale : r[c] ?? null)));
+  }
   if (data.statIcons?.length) {
     const stIcon = replaceLocale('stat_icons', tables.stat_icons);
     for (const r of data.statIcons) stIcon.run(...tables.stat_icons.map((c) => (c === 'locale' ? locale : r[c] ?? null)));

@@ -7,15 +7,24 @@
    ============================================================ */
 'use strict';
 
-/* ---------------------------------------------------------- 常量 */
+/* ---------------------------------------------------------- 常量
+   六维顺序【按原站】来：从正上方顺时针为
+     生命 → 魔攻 → 魔防 → 速度 → 物防 → 物攻
+   （原站用 spirit_stats_mini_label--top / upper_right / lower_right /
+     bottom / lower_left / upper_left 这套类名，顺序就是这么排的。）
+   键名直接用上游的短名（satk/sdef/spd/pdef/patk），这样查 stat_icons 时
+   可以用 stat + '_attack'/'_defense' 直接对上，不必再维护一张映射表。
+   ------------------------------------------------------------------ */
 const STAT_KEYS = [
-  { k: 'hp', label: '生命', icon: 'hp' },
-  { k: 'patk', label: '物攻', icon: 'physical_attack' },
-  { k: 'satk', label: '魔攻', icon: 'special_attack' },
-  { k: 'pdef', label: '物防', icon: 'physical_defense' },
-  { k: 'sdef', label: '魔防', icon: 'special_defense' },
-  { k: 'spd', label: '速度', icon: 'speed' },
+  { stat: 'hp', label: '生命' },
+  { stat: 'satk', label: '魔攻' },
+  { stat: 'sdef', label: '魔防' },
+  { stat: 'spd', label: '速度' },
+  { stat: 'pdef', label: '物防' },
+  { stat: 'patk', label: '物攻' },
 ];
+/** 内部统计键 -> stat_icons 表里的键 */
+const ICON_KEY = { hp: 'hp', patk: 'physical_attack', satk: 'special_attack', pdef: 'physical_defense', sdef: 'special_defense', spd: 'speed' };
 const STAT_MAX = { hp: 200, patk: 180, satk: 180, pdef: 180, sdef: 180, spd: 180 };
 const SRC_LABEL = { level: '升级学会', machine: '技能石', blood: '血脉', passive: '被动' };
 const GROUP_LABEL = { level_up: '升级学会', spirit_stone: '技能石', bloodline_elixir: '血脉' };
@@ -53,6 +62,7 @@ const STATE = {
   typeById: new Map(),
   glossaryById: new Map(),
   statIconByStat: new Map(),
+  skillIconById: new Map(),
   view: 'spirits',
   filters: {
     spirits: { q: '', types: new Set(), sort: 'id', dir: 1, forms: false },
@@ -81,16 +91,40 @@ function index(data) {
   for (const t of data.meta.types) STATE.typeById.set(t.id, t);
   STATE.glossaryById = new Map((data.glossary ?? []).map((g) => [g.id, g]));
   STATE.statIconByStat = new Map((data.meta.statIcons ?? []).map((x) => [x.stat, x]));
+  STATE.skillIconById = new Map(data.meta.skillIcons ?? []);
 }
 
-/* ------------------------------------------------------ 展示辅助 */
+/* ============================================================
+   展示辅助
+   ============================================================ */
 const typeName = (id) => STATE.typeById.get(id)?.name ?? '';
 const typeShort = (id) => STATE.typeById.get(id)?.short ?? typeName(id);
 const typeColor = (id) => STATE.typeById.get(id)?.color ?? '#7a8699';
 
+/** 技能图标（本地优先，回退在线）；索引是 [[id, path], …] 数组，构建时转 Map */
+const skillIconOf = (id) => {
+  const local = STATE.skillIconById.get(id);
+  const sk = STATE.bySkill.get(id);
+  return { local: local ?? sk?.img ?? null, online: sk?.imgOnline ?? null };
+};
+const skillIconTag = (id, cls = 'skill-icon') => {
+  const { local, online } = skillIconOf(id);
+  if (!local && !online) return '';
+  return imgTag(local, online, '', cls);
+};
+
+/**
+ * 系别徽章：原站用的是圆形图标（56×56 的圆形徽章图），比文字更直观。
+ * 找不到图标时退回文字徽章，不会变成空白。
+ */
 function badge(id, ghost = false) {
   const t = STATE.typeById.get(id);
   if (!t) return '';
+  if (t.icon || t.iconOnline) {
+    const title = `${t.name}${t.immunities?.length ? `（免疫：${t.immunities.join('、')}）` : ''}`;
+    return `<span class="tbadge-img" style="--tc:${t.color}" title="${esc(title)}">
+      ${imgTag(t.icon, t.iconOnline, t.name, 'type-icon')}<span class="tbadge-txt">${esc(t.short || t.name)}</span></span>`;
+  }
   return `<span class="tbadge${ghost ? ' ghost' : ''}" style="--tc:${t.color}">${esc(t.short || t.name)}</span>`;
 }
 const badges = (ids, ghost = false) => (ids ?? []).map((i) => badge(i, ghost)).join('');
@@ -361,6 +395,8 @@ function viewTypes() {
   const cellCls = (e) => (e === 2 ? 'mx-2' : e === 1 ? 'mx-1' : e === 0 ? 'mx0' : e === -1 ? 'mx-n1' : e === -2 ? 'mx-n2' : 'mx-na');
   const cellText = (e) => (e === 2 ? '×2' : e === 1 ? '×1' : e === 0 ? '1' : e === -1 ? '½' : e === -2 ? '¼' : '');
 
+  // 矩阵里 18×18 格子很密，这里的系别只显示文字（加 icon-off 关掉图标），
+  // 表头/行首允许显示图标
   const header = tlist.map((t) => `<th title="${esc(t.name)}">${badge(t.id)}</th>`).join('');
   const rows = tlist.map((atk) => `
     <tr>
@@ -495,39 +531,37 @@ function radarChart(stats) {
   }).join('');
 
   // 数据多边形：每项按自己的上限缩放
-  const points = STAT_KEYS.map(({ k }, i) => {
-    const v = Math.max(0, stats[k] ?? 0);
-    const ratio = Math.min(1, v / (STAT_MAX[k] ?? 180));
+  const points = STAT_KEYS.map(({ stat }, i) => {
+    const v = Math.max(0, stats[stat] ?? 0);
+    const ratio = Math.min(1, v / (STAT_MAX[stat] ?? 180));
     return pt(i, R * Math.max(0.09, ratio));
   });
   const poly = points.map(([x, y], i) => `${i ? 'L' : 'M'}${f(x)} ${f(y)}`).join(' ') + ' Z';
   const dots = points.map(([x, y], i) =>
-    `<circle class="radar-dot s-${STAT_KEYS[i].k}" cx="${f(x)}" cy="${f(y)}" r="3"/>`).join('');
+    `<circle class="radar-dot s-${STAT_KEYS[i].stat}" cx="${f(x)}" cy="${f(y)}" r="3"/>`).join('');
 
   // 外侧标签：图标（当 CSS mask 用，按数值染色）+ 数值
-  // 注意：内部统计键是缩写（patk/satk…），而 stat_icons 表用的是上游的完整名
-  // （physical_attack/special_attack…），靠 STAT_KEYS[].icon 做映射，
-  // 直接用 k 去查会只有 hp 命中（踩过）。
-  const labels = STAT_KEYS.map(({ k, label, icon: iconKey }, i) => {
+  // 图标来自 stat_icons 表，键名是上游完整名，靠 ICON_KEY 映射。
+  const labels = STAT_KEYS.map(({ stat, label }, i) => {
     const [x, y] = pt(i, R + 24);
-    const v = stats[k] ?? 0;
-    const ratio = Math.min(1, Math.max(0, v / (STAT_MAX[k] ?? 180)));
-    const icon = STATE.statIconByStat.get(iconKey);
+    const v = stats[stat] ?? 0;
+    const ratio = Math.min(1, Math.max(0, v / (STAT_MAX[stat] ?? 180)));
+    const icon = STATE.statIconByStat.get(ICON_KEY[stat] ?? stat);
     const anchor = Math.abs(x - C) < 8 ? 'middle' : (x > C ? 'start' : 'end');
     // 染色的比例：数值越低越淡（对应原站的 --stat-tint-high/low）
     const tint = `--tint:${(ratio * 100).toFixed(0)}%`;
     if (icon) {
       const maskUrl = esc(icon.icon || icon.iconOnline);
       return `<g class="radar-node" style="${tint}">
-        <rect class="radar-icon" x="${f(x - 11)}" y="${f(y - 20)}" width="22" height="22"
+        <rect class="radar-icon" x="${f(x - 12)}" y="${f(y - 21)}" width="24" height="24"
               style="-webkit-mask-image:url('${maskUrl}');mask-image:url('${maskUrl}')"/>
-        <text class="radar-val" x="${f(x)}" y="${f(y + 12)}" text-anchor="${anchor}" dominant-baseline="middle">${v}</text>
+        <text class="radar-val" x="${f(x)}" y="${f(y + 13)}" text-anchor="${anchor}" dominant-baseline="middle">${v}</text>
       </g>`;
     }
     return `<text class="radar-label" x="${f(x)}" y="${f(y)}" text-anchor="${anchor}" dominant-baseline="middle">${label} <tspan class="radar-val">${v}</tspan></text>`;
   }).join('');
 
-  return `<svg class="radar" viewBox="0 0 ${SIZE} ${SIZE}" role="img" aria-label="六维种族值雷达图：${STAT_KEYS.map(({ k, label }) => `${label} ${stats[k] ?? 0}`).join('，')}">
+  return `<svg class="radar" viewBox="0 0 ${SIZE} ${SIZE}" role="img" aria-label="六维种族值雷达图：${STAT_KEYS.map(({ stat, label }) => `${label} ${stats[stat] ?? 0}`).join('，')}">
     ${rings}${spokes}
     <path class="radar-area" d="${poly}"/>
     ${dots}${labels}
@@ -538,11 +572,11 @@ function spiritDetail(key, lvFromSkillId = null) {
   const sp = STATE.bySpirit.get(key);
   if (!sp) return toast('找不到这只精灵');
   const skills = spiritSkillsOf(sp);
-  const statRows = STAT_KEYS.map(({ k, label }) => {
-    const v = sp.stats[k] ?? 0;
-    const pct = Math.min(100, (v / (STAT_MAX[k] ?? 180)) * 100);
+  const statRows = STAT_KEYS.map(({ stat, label }) => {
+    const v = sp.stats[stat] ?? 0;
+    const pct = Math.min(100, (v / (STAT_MAX[stat] ?? 180)) * 100);
     return `<div class="stat"><span class="k">${label}</span>
-      <div class="bar s-${k}"><i style="width:${pct}%"></i></div>
+      <div class="bar s-${stat}"><i style="width:${pct}%"></i></div>
       <span class="v">${v}</span></div>`;
   }).join('');
   // 雷达图 + 数值条一起给：图看形状，条看精确值
@@ -553,10 +587,11 @@ function spiritDetail(key, lvFromSkillId = null) {
 
   const skillTable = (arr, withLv) => arr.length ? `
     <div class="table-wrap"><table>
-      <thead><tr>${withLv ? '<th class="num">Lv</th>' : ''}<th>技能</th><th class="num">威力</th>
+      <thead><tr><th class="mid">图标</th>${withLv ? '<th class="num">Lv</th>' : ''}<th>技能</th><th class="num">威力</th>
         <th class="num">能耗</th><th class="mid">分类</th><th class="mid">系别</th><th>效果</th></tr></thead>
       <tbody>${arr.map((s) => `
         <tr class="clickable" data-skill="${s.id}">
+          <td class="mid">${skillIconTag(s.id)}</td>
           ${withLv ? `<td class="num">${s.lv ?? '—'}</td>` : ''}
           <td class="skill-name">${esc(s.name)}${lvFromSkillId === s.id ? ' <span class="pill">当前</span>' : ''}</td>
           <td class="num">${s.dmgMax ?? ''}</td><td class="num">${s.energy ?? ''}</td>
@@ -583,8 +618,11 @@ function spiritDetail(key, lvFromSkillId = null) {
       </div>
     </div>
 
-    ${sp.passive ? `<div class="section"><h3>被动技能</h3>
-      <div class="passive"><b>${esc(sp.passive.name)}</b> — ${glossaryTag(sp.passive.desc)}</div></div>` : ''}
+    ${sp.passive ? `<div class="section"><h3>被动技能（特性）</h3>
+      <div class="passive">
+        ${sp.passive.icon ? `<span class="passive-icon">${imgTag(sp.passive.icon, null, sp.passive.name)}</span>` : ''}
+        <span><b>${esc(sp.passive.name)}</b> — ${glossaryTag(sp.passive.desc)}</span>
+      </div></div>` : ''}
 
     ${evo ? `<div class="section"><h3>进化链</h3><div class="evo">${evo}</div></div>` : ''}
 
@@ -659,10 +697,13 @@ function skillDetail(skillId, ownerKey = null) {
     const sorted = arr.slice().sort((a, b) => (a.lv ?? 999) - (b.lv ?? 999) || a.name.localeCompare(b.name, 'zh'));
     return `<div class="section"><h3>${GROUP_LABEL[key]} <span class="n">${arr.length}</span></h3>
       <div class="table-wrap"><table>
-        <thead><tr><th>精灵</th><th class="num">解锁等级</th><th class="mid">形态</th><th class="mid">系别</th></tr></thead>
+        <thead><tr><th class="mid">头像</th><th>精灵</th><th class="num">解锁等级</th><th class="mid">形态</th><th class="mid">系别</th></tr></thead>
         <tbody>${sorted.map((l) => {
           const sp = l.sp;
+          // 头像从精灵表查（导出时不再给每条学习者记录重复存路径，省 2 MB）
+          const head = sp?.head, headOnline = sp?.headOnline;
           return `<tr class="clickable" data-spirit="${l.id}:${l.formId}">
+            <td class="mid">${head || headOnline ? imgTag(head, headOnline, l.name, 'spirit-head') : ''}</td>
             <td class="skill-name">${esc(l.name)}${owner && l.id === owner.id ? ' <span class="pill">当前</span>' : ''}</td>
             <td class="num">${l.lv ?? '—'}</td>
             <td class="mid">${esc(l.form || '默认')}</td>

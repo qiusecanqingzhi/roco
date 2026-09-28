@@ -167,6 +167,20 @@ button { font: inherit; color: inherit; }
   background: var(--tc); color: #fff; text-shadow: 0 1px 1px #0004;
 }
 .tbadge.ghost { background: transparent; color: var(--tc); border: 1px solid var(--tc); text-shadow: none; }
+
+/* 系别徽章（图标版）：原站的系别图标本来就是圆形徽章图，直接显示即可 */
+.tbadge-img { display: inline-flex; align-items: center; gap: 4px; }
+.tbadge-img .type-icon {
+  width: 22px; height: 22px; object-fit: contain; flex: 0 0 auto;
+  filter: drop-shadow(0 1px 2px #0003);
+}
+.tbadge-img .tbadge-txt { font-size: 12px; color: var(--text-dim); }
+/* 密集场景（克制矩阵）只留文字 */
+.icon-off .tbadge-img .type-icon { display: none; }
+
+/* 技能图标 / 精灵头像 */
+.skill-icon { width: 34px; height: 34px; object-fit: contain; border-radius: 7px; }
+.spirit-head { width: 30px; height: 30px; object-fit: contain; }
 .pill {
   display: inline-block; padding: 1px 8px; border-radius: 999px;
   background: var(--card-hi); color: var(--text-dim); font-size: 11px;
@@ -305,8 +319,11 @@ table.matrix td {
 .passive {
   background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--accent);
   border-radius: 8px; padding: 8px 12px;
+  display: flex; align-items: center; gap: 10px;
 }
 .passive b { color: var(--accent); }
+.passive-icon { flex: 0 0 auto; display: flex; }
+.passive-icon img { width: 44px; height: 44px; object-fit: contain; border-radius: 9px; }
 
 .evo { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .evo .node {

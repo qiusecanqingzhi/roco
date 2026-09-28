@@ -109,11 +109,21 @@ for (const t of types) {
 }
 
 /* ---------------------------------------------------------------- 精灵 */
+// 被动技能（特性）的图标单独存在 passive_skill 表里
+const passiveIcons = new Map();
+const passiveIconUrls = [];          // 原站 URL，给图片清单用
+for (const p of rows('SELECT * FROM passive_skill WHERE locale = ?', L)) {
+  if (!p.image_url) continue;
+  passiveIcons.set(`${p.handbook_id}:${p.form_id}`, assetName(p.image_url));
+  passiveIconUrls.push(p.image_url);
+}
+
 const spiritRows = rows('SELECT * FROM spirit WHERE locale = ? ORDER BY handbook_id, form_id', L);
 const spirits = spiritRows.map((s) => {
   const image = s.image_url ? s.image_url.replace(ORIGIN, '') : null;
   const head = s.head_image_url ? s.head_image_url.replace(ORIGIN, '') : null;
   const portrait = s.portrait_small_url ? s.portrait_small_url.replace(ORIGIN, '') : null;
+  const passiveIcon = passiveIcons.get(`${s.handbook_id}:${s.form_id}`) ?? null;
   return {
     id: s.handbook_id,
     formId: s.form_id,
@@ -127,7 +137,9 @@ const spirits = spiritRows.map((s) => {
       pdef: s.stat_physical_defense, sdef: s.stat_special_defense, spd: s.stat_speed,
     },
     bst: s.base_stat_total,
-    passive: s.passive_skill_name ? { name: s.passive_skill_name, desc: s.passive_skill_desc, descPlain: plainText(s.passive_skill_desc) } : null,
+    passive: s.passive_skill_name
+      ? { name: s.passive_skill_name, desc: s.passive_skill_desc, descPlain: plainText(s.passive_skill_desc), icon: passiveIcon }
+      : null,
     eggs: s.egg_groups ? s.egg_groups.split(' / ').filter(Boolean) : [],
     family: s.family ? s.family.split(' / ').filter(Boolean) : [],
     skills: s.skill_count,
@@ -155,12 +167,21 @@ for (const r of ssRows) {
   });
 }
 
+// 技能图标索引：给精灵详情的技能表用（技能库里本来就有图标）
+// 用数组而不是对象：id 都是数字，数组序列化更紧凑（579 条省下大量引号与键名）
+const skillIcons = [];
+for (const s of rows('SELECT id, image_url FROM skill WHERE locale = ? ORDER BY id', L)) {
+  if (s.image_url) skillIcons.push([s.id, assetName(s.image_url)]);
+}
+
 /* ---------------------------------------------------------------- 技能 */
 const skillRows = rows('SELECT * FROM skill WHERE locale = ? ORDER BY id', L);
 const learnerRows = rows('SELECT * FROM skill_learner WHERE locale = ?', L);
 const learners = new Map();
 for (const r of learnerRows) {
   if (!learners.has(r.skill_id)) learners.set(r.skill_id, []);
+  // 不给每条记录重复存头像路径：前端用 id:formId 从精灵表查即可
+  // （实测把 head 塞进来会让 skill-learners.json 从 1.1 MB 涨到 3.0 MB）
   learners.get(r.skill_id).push({
     id: r.handbook_id, formId: r.form_id, name: r.spirit_name,
     form: r.form || null, group: r.source_group, lv: r.unlock_level,
@@ -239,6 +260,7 @@ const meta = {
   origin: ORIGIN,
   types,
   statIcons,
+  skillIcons,
 };
 
 // 精灵 -> 技能 / 技能 -> 可学精灵（都是对象映射，按需要查）
@@ -274,6 +296,7 @@ for (const s of spirits) { addUrl(s.imgOnline); addUrl(s.headOnline); addUrl(s.p
 for (const s of skills) addUrl(s.imgOnline);
 for (const t of types) addUrl(t.iconOnline);
 for (const x of statIcons) addUrl(x.iconOnline);
+for (const u of passiveIconUrls) addUrl(u);
 writeJson(path.join(cfg.out, 'assets.json'), [...urls].sort());
 
 console.log(`\n✓ 完成（${((Date.now() - t0) / 1000).toFixed(1)}s）`);
