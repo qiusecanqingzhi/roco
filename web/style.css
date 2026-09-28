@@ -475,10 +475,16 @@ table.matrix td {
 .nat-line.compact .nat-btn { padding: 2px 7px; font-size: 11px; }
 .nat-line.compact .nat-iv input { width: 50px; padding: 2px 5px; }
 .nat-line.compact .nat-ic { width: 17px; height: 17px; }
-.stat .v .gain {
-  display: inline-block; margin-left: 4px; font-size: 11px; font-weight: 600;
-  color: #4fc06d; background: #4fc06d22; border-radius: 5px; padding: 0 4px;
+/* 数值条：基础部分（浅）+ 个体贡献部分（深），一眼看出"练没练" */
+.stat .bar { position: relative; overflow: hidden; }
+.stat .bar > i { position: absolute; left: 0; top: 0; height: 100%; border-radius: 6px 0 0 6px; }
+.stat .bar > u {
+  position: absolute; top: 0; height: 100%; text-decoration: none;
+  background: var(--accent); filter: saturate(1.6) brightness(0.78);
+  box-shadow: inset 1px 0 0 #fff3;
 }
+/* 雷达图上的"参考上限"标记点 */
+.radar-cap { fill: var(--text-faint); opacity: .5; }
 
 /* ------------------------------------------------------ 术语 */
 .glossary { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }

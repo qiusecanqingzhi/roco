@@ -25,7 +25,15 @@ const STAT_KEYS = [
 ];
 /** 内部统计键 -> stat_icons 表里的键 */
 const ICON_KEY = { hp: 'hp', patk: 'physical_attack', satk: 'special_attack', pdef: 'physical_defense', sdef: 'special_defense', spd: 'speed' };
-const STAT_MAX = { hp: 200, patk: 180, satk: 180, pdef: 180, sdef: 180, spd: 180 };
+/**
+ * 面板值的参考上限，用于进度条与雷达图的缩放（两者必须共用同一套，否则形状对不上）。
+ * 取值依据是全库 621 只精灵在「个体 0 / 中性」下的实际分布（约 95% 分位）：
+ *   生命 224~663（中位 328）、物攻 66~280、魔攻 69~271、
+ *   物防 90~261、魔防 90~261、速度 89~220
+ * 早先写死成 hp:200 / 其他:180，而生命中位数就有 328，于是
+ *   所有条子都是满的、雷达被压平（踩过：用户反馈"有点不美观"）。
+ */
+const STAT_MAX = { hp: 450, patk: 250, satk: 250, pdef: 250, sdef: 250, spd: 250 };
 const SRC_LABEL = { level: '升级学会', machine: '技能石', blood: '血脉', passive: '被动', legendary: '传说' };
 const GROUP_LABEL = { level_up: '升级学会', spirit_stone: '技能石', bloodline_elixir: '血脉' };
 // 官方 effect_values：counter=1（克制 ×2）、neutral=0（普通 ×1）、resisted=-1（抵抗 ×0.5）
@@ -155,14 +163,18 @@ function natalBlock(sp, c) {
     const st = c.stats[k];
     const base = sp.stats[k] ?? 0;
     const v = vals[k];
-    const pct = Math.min(100, (v / (STAT_MAX[k] ?? 180)) * 100);
-    const mark = st.nature === 'up' ? '<b class="nv-up">▲</b>' : st.nature === 'down' ? '<b class="nv-down">▼</b>' : '';
-    // 个体这一项贡献了多少（便于判断"还值不值得继续投"）
+    const denom = STAT_MAX[k] ?? 250;
+    // 分段着色：基础种族值部分（浅） + 个体贡献部分（深），一眼看出"练没练"
     const ivGain = v - panelInt(k, base, 0, st.nature);
+    const baseW = Math.min(100, ((v - ivGain) / denom) * 100);
+    const ivW = Math.min(100 - baseW, (ivGain / denom) * 100);
+    const mark = st.nature === 'up' ? '<b class="nv-up">▲</b>' : st.nature === 'down' ? '<b class="nv-down">▼</b>' : '';
     return `<div class="stat">
       <span class="k">${STAT_LABEL6[k]}${mark}</span>
-      <div class="bar s-${k}"><i style="width:${pct}%"></i></div>
-      <span class="v">${v}${ivGain > 0 ? `<span class="gain" title="其中个体贡献 +${ivGain}">+${ivGain}</span>` : ''}</span>
+      <div class="bar s-${k}" title="${v} / 参考上限 ${denom}">
+        <i style="width:${baseW}%"></i>${ivW > 0 ? `<u style="width:${ivW}%"></u>` : ''}
+      </div>
+      <span class="v">${v}</span>
     </div>`;
   }).join('');
 
@@ -1247,10 +1259,10 @@ function radarChart(stats) {
     return `<line class="radar-spoke" x1="${C}" y1="${C}" x2="${f(x)}" y2="${f(y)}"/>`;
   }).join('');
 
-  // 数据多边形：每项按自己的上限缩放
+  // 数据多边形：每项按自己的参考上限缩放
   const points = STAT_KEYS.map(({ stat }, i) => {
     const v = Math.max(0, stats[stat] ?? 0);
-    const ratio = Math.min(1, v / (STAT_MAX[stat] ?? 180));
+    const ratio = Math.min(1, v / (STAT_MAX[stat] ?? 250));
     return pt(i, R * Math.max(0.09, ratio));
   });
   const poly = points.map(([x, y], i) => `${i ? 'L' : 'M'}${f(x)} ${f(y)}`).join(' ') + ' Z';
@@ -1262,7 +1274,7 @@ function radarChart(stats) {
   const labels = STAT_KEYS.map(({ stat, label }, i) => {
     const [x, y] = pt(i, R + 24);
     const v = stats[stat] ?? 0;
-    const ratio = Math.min(1, Math.max(0, v / (STAT_MAX[stat] ?? 180)));
+    const ratio = Math.min(1, Math.max(0, v / (STAT_MAX[stat] ?? 250)));
     const icon = STATE.statIconByStat.get(ICON_KEY[stat] ?? stat);
     const anchor = Math.abs(x - C) < 8 ? 'middle' : (x > C ? 'start' : 'end');
     // 染色的比例：数值越低越淡（对应原站的 --stat-tint-high/low）
@@ -1278,10 +1290,16 @@ function radarChart(stats) {
     return `<text class="radar-label" x="${f(x)}" y="${f(y)}" text-anchor="${anchor}" dominant-baseline="middle">${label} <tspan class="radar-val">${v}</tspan></text>`;
   }).join('');
 
-  return `<svg class="radar" viewBox="0 0 ${SIZE} ${SIZE}" role="img" aria-label="六维种族值雷达图：${STAT_KEYS.map(({ stat, label }) => `${label} ${stats[stat] ?? 0}`).join('，')}">
+  // 每根轴上的"参考上限"虚线圈：直观看出哪项接近上限、哪项还差得远
+  const capMarks = STAT_KEYS.map(({ stat }, i) => {
+    const [x, y] = pt(i, R);
+    return `<circle class="radar-cap" cx="${f(x)}" cy="${f(y)}" r="2.5"><title>${STAT_LABEL6[stat] ?? stat} 参考上限 ${STAT_MAX[stat] ?? 250}</title></circle>`;
+  }).join('');
+
+  return `<svg class="radar" viewBox="0 0 ${SIZE} ${SIZE}" role="img" aria-label="六维面板雷达图：${STAT_KEYS.map(({ stat, label }) => `${label} ${stats[stat] ?? 0}`).join('，')}">
     ${rings}${spokes}
     <path class="radar-area" d="${poly}"/>
-    ${dots}${labels}
+    ${dots}${capMarks}${labels}
   </svg>`;
 }
 

@@ -70,6 +70,13 @@ console.log('\n· 外侧标签（图标 + 数值）');
 //   生命 349 / 魔攻 115 / 魔防 168 / 速度 165 / 物防 192 / 物攻 205
 // 只校验"顺序"（用种族值排序反推顺序），不把具体数值写死 —— 公式改了不用改测试。
 const EXPECT_LABELS = ['生命', '魔攻', '魔防', '速度', '物防', '物攻'];
+// 果实立方人（默认个体0/中性）的六维面板值，后面几段都要用
+const sp466 = api.STATE.bySpirit.get('466:1');
+const PANEL_KEYS = ['hp', 'satk', 'sdef', 'spd', 'pdef', 'patk'];
+const hpVal = api.panelInt('hp', sp466.stats.hp, 0, 'neutral');
+const patkVal = api.panelInt('patk', sp466.stats.patk, 0, 'neutral');
+const satkVal = api.panelInt('satk', sp466.stats.satk, 0, 'neutral');
+const HP_SCALE = 450;      // 生命参考上限（按全库分布定）
 const hasIcons = /class="radar-icon"/.test(svg);
 if (hasIcons) {
   ok((svg.match(/class="radar-icon"/g) || []).length === 6, '六个维度图标（当 CSS mask 用）');
@@ -78,22 +85,22 @@ if (hasIcons) {
   const vals = [...svg.matchAll(/class="radar-val"[^>]*>(\d+)</g)].map((m) => Number(m[1]));
   ok(vals.length === 6, `六个数值文字（实际 ${vals.length}）`);
   // 顺序校验：把种族值按同样的顺序算成面板值，逐一对比
-  const sp466 = api.STATE.bySpirit.get('466:1');
-  const expectVals = EXPECT_LABELS.map((_, i) => api.panelInt(['hp', 'satk', 'sdef', 'spd', 'pdef', 'patk'][i], sp466.stats[['hp', 'satk', 'sdef', 'spd', 'pdef', 'patk'][i]], 0, 'neutral'));
+  const expectVals = PANEL_KEYS.map((k) => api.panelInt(k, sp466.stats[k], 0, 'neutral'));
   ok(vals.join(',') === expectVals.join(','),
     `数值顺序与原站一致：${vals.join(',')}（期望 ${expectVals.join(',')}）`);
-  // 染色比例跟随数值：生命 349 超过上限 200 -> 100%；魔攻 115 应比物攻 205 淡
+  // 染色比例跟随数值
   const tints = [...svg.matchAll(/--tint:(\d+)%/g)].map((m) => Number(m[1]));
-  ok(tints[0] === 100, `生命染色 100%（实际 ${tints[0]}%，因面板值超上限）`);
-  ok(tints[1] < tints[5], `魔攻(115) 染色比物攻(205) 更淡（${tints[1]}% < ${tints[5]}%）`);
+  const expectTint = Math.round(Math.min(1, hpVal / HP_SCALE) * 100);
+  ok(Math.abs(tints[0] - expectTint) <= 1, `生命染色 ≈${expectTint}%（实际 ${tints[0]}%）`);
+  ok(tints[1] < tints[5], `魔攻(${satkVal}) 染色比物攻(${patkVal}) 更淡（${tints[1]}% < ${tints[5]}%）`);
 } else {
   ok((svg.match(/class="radar-label"/g) || []).length === 6, '无图标时退回六个文字标签');
 }
 for (const label of EXPECT_LABELS) {
-  ok(svg.includes(`aria-label="六维种族值雷达图：`) && svg.includes(`${label} `), `无障碍标签含「${label}」`);
+  ok(svg.includes(`aria-label="六维面板雷达图：`) && svg.includes(`${label} `), `无障碍标签含「${label}」`);
 }
 // aria 里的顺序也要对
-const ariaSeq = /aria-label="六维种族值雷达图：([^"]+)"/.exec(svg)?.[1] ?? '';
+const ariaSeq = /aria-label="六维面板雷达图：([^"]+)"/.exec(svg)?.[1] ?? '';
 ok(ariaSeq.split('，').map((x) => x.split(' ')[0]).join(',') === EXPECT_LABELS.join(','),
   `无障碍标签顺序一致：${ariaSeq.split('，').map((x) => x.split(' ')[0]).join(',')}`);
 
@@ -105,14 +112,12 @@ const C = 120;                        // viewBox 240 -> 圆心 120
 const dist = ([x, y]) => Math.hypot(x - C, y - C);
 if (pts) {
   // 第 1 个点是「生命」（向上）；第 2 个是「魔攻」（右上）
-  // 半径按"该值 / 固定上限 × R"缩放。生命面板值 349 已超上限 200，所以顶点在外圈。
+  // 半径按"该值 / 参考上限 × R"缩放。生命上限 450（按全库分布定，不是 200）。
   const R = 78;
-  const sp466 = api.STATE.bySpirit.get('466:1');
-  const hpVal = api.panelInt('hp', sp466.stats.hp, 0, 'neutral');
-  const patkVal = api.panelInt('patk', sp466.stats.patk, 0, 'neutral');
-  const satkVal = api.panelInt('satk', sp466.stats.satk, 0, 'neutral');
-  const expect = R * Math.min(1, hpVal / 200);
-  ok(Math.abs(dist(pts[0]) - expect) < 1.5, `生命顶点半径 ≈ ${expect.toFixed(1)}（生命 ${hpVal}/${api.STATE.data ? 200 : 200}，实际 ${dist(pts[0]).toFixed(1)}）`);
+  const expect = R * Math.min(1, hpVal / HP_SCALE);
+  ok(Math.abs(dist(pts[0]) - expect) < 1.5, `生命顶点半径 ≈ ${expect.toFixed(1)}（生命 ${hpVal} / 上限 ${HP_SCALE}，实际 ${dist(pts[0]).toFixed(1)}）`);
+  // 参考上限的标记点应贴在轴末端
+  ok((svg.match(/class="radar-cap"/g) || []).length === 6, `六根轴上各有一个参考上限标记（实际 ${(svg.match(/class="radar-cap"/g) || []).length}）`);
   ok(pts[0][1] < C, '生命顶点在圆心上方（第一轴朝向正确）');
   ok(pts[1][0] > C && pts[1][1] < C, '第二轴（魔攻）在右上方 —— 顺时针排列');
   ok(dist(pts[1]) < dist(pts[5]), `魔攻(${satkVal}) 比 物攻(${patkVal}) 更靠内 —— 数值越大越外`);
