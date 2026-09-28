@@ -22,10 +22,11 @@ on:
         default: zh-Hans
   push:
     branches: [main]
+    # 用 web/** 而不是逐个列文件：之前只列了 index.html / app.js / style.css，
+    # 结果改了 web/cache-bust.mjs、web/build-share.mjs 这类构建脚本时工作流不触发，
+    # 推送成功了但线上根本没部署（排查了半天的"改了却看不到"就是它）。
     paths:
-      - 'web/index.html'
-      - 'web/app.js'
-      - 'web/style.css'
+      - 'web/**'
       - '.github/workflows/sync.yml'
 
 permissions:
