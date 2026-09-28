@@ -239,6 +239,115 @@ api.glossaryDetail(1001);
 const noLinkGloss = ids.get('modalBody').innerHTML;
 ok(!linkRe.test(noLinkGloss), '术语弹窗里没有指向 roco.world 的 <a> 链接');
 
+/* ---------------------------------------------------------- 伤害计算器 */
+// 公式来自对战模拟器说明页，这里逐步复现它的算例：
+//   岚鸟(物攻234) 用 扇风(75, 本系, 打草×2) 打 奇丽花(物防226) => 332
+// 若把 effect 映射搞反（1 当抵抗），结果会变成 83 —— 差 4 倍，所以这几条断言很关键。
+console.log('\n· 伤害计算器');
+const A2 = api.STATE;
+const lan = A2.data.spirits.find((s) => s.name === '岚鸟');
+const qi = A2.data.spirits.find((s) => s.name === '奇丽花');
+const shanfeng = A2.data.skills.find((s) => s.name === '扇风');
+ok(!!lan && !!qi && !!shanfeng, '找得到岚鸟 / 奇丽花 / 扇风');
+ok(lan.stats.patk === 128, `岚鸟物攻种族 128（实际 ${lan.stats.patk}）`);
+ok(qi.stats.pdef === 121, `奇丽花物防种族 121（实际 ${qi.stats.pdef}）`);
+ok(shanfeng.dmgMax === 75, `扇风基础威力 75（实际 ${shanfeng.dmgMax}）`);
+
+ok(api.panelStat(128, 10, 1) === 234, `物攻面板 128/个体10 -> 234（实际 ${api.panelStat(128, 10, 1)}）`);
+ok(api.panelStat(121, 10, 1) === 226, `物防面板 121/个体10 -> 226（实际 ${api.panelStat(121, 10, 1)}）`);
+ok(Math.abs(api.levelCoef(60) - 37 / 41) < 1e-12, `等级系数 60 级 = 37/41（实际 ${api.levelCoef(60)}）`);
+
+// 克制倍率（官方 effect_values：1=克制×2 / 0=普通×1 / -1=抵抗×0.5）
+// 注意传的是系别 id（spirit.types 里就是 id）
+const tid = (n) => A2.typeByName.get(n).id;
+ok(api.typeEffect(tid('翼系'), [tid('草系')]) === 2, `翼系打草系 ×2（实际 ${api.typeEffect(tid('翼系'), [tid('草系')])}）`);
+ok(api.typeEffect(tid('火系'), [tid('草系')]) === 2, `火系打草系 ×2（实际 ${api.typeEffect(tid('火系'), [tid('草系')])}）`);
+ok(api.typeEffect(tid('火系'), [tid('水系')]) === 0.5, `火系打水系 ×0.5（实际 ${api.typeEffect(tid('火系'), [tid('水系')])}）`);
+ok(api.typeEffect(tid('水系'), [tid('火系')]) === 2, `水系打火系 ×2（实际 ${api.typeEffect(tid('水系'), [tid('火系')])}）`);
+// 双系别相乘
+ok(api.typeEffect(tid('火系'), [tid('草系'), tid('水系')]) === 1, '打「草+水」双系：×2 × ×0.5 = ×1');
+
+// 完整公式：复现参考页的 332
+const ref = api.calcDamage(lan, qi, shanfeng, { level: 60, iv: 10, nature: 1, flatAdd: 20, skillPct: 0.5, targetHp: 411 });
+ok(ref.effective === 142.5, `① 有效威力 (75+20)×1.5 = 142.5（实际 ${ref.effective}）`);
+ok(ref.shown === 356, `② 显示威力 round(142.5×1.25×2) = 356（实际 ${ref.shown}）`);
+ok(ref.dmg === 332, `④ 预计伤害 = 332（实际 ${ref.dmg}）`);
+ok(ref.hits === 2, `打 411 血需要 2 下（实际 ${ref.hits}）`);
+
+const plain = api.calcDamage(lan, qi, shanfeng, { level: 60, iv: 10 });
+ok(plain.effective === 75, `无加成时有效威力 = 基础威力 75（实际 ${plain.effective}）`);
+ok(plain.stab === 1.25, '同系技能吃到本系 ×1.25');
+const otherSkill = A2.data.skills.find((s) => s.name === '拍击');
+if (otherSkill) {
+  const r2 = api.calcDamage(lan, qi, otherSkill, { level: 60, iv: 10 });
+  ok(r2.stab === 1, `非本系技能不吃本系加成（${otherSkill.type}，实际 ${r2.stab}）`);
+}
+const statusSkill = A2.data.skills.find((s) => s.cat === '状态');
+if (statusSkill) {
+  const r3 = api.calcDamage(lan, qi, statusSkill, { level: 60 });
+  ok(r3.dmg === 0 && r3.hits === Infinity, `状态技能伤害为 0（${statusSkill.name}）`);
+}
+const staged = api.calcDamage(lan, qi, shanfeng, { level: 60, atkStage: 1 });
+ok(Math.abs(staged.atkZone - 2) < 1e-9, `攻击+100% -> 攻防乘区 ×2（实际 ${staged.atkZone}）`);
+const defUp = api.calcDamage(lan, qi, shanfeng, { level: 60, defStage: 0.7 });
+ok(Math.abs(defUp.atkZone - 1 / 1.7) < 1e-9, `对方防御+70% -> 乘区 1/1.7（实际 ${defUp.atkZone}）`);
+
+/* ---------------------------------------------------------- 克制映射（踩过的坑） */
+// 官方 types.json 的 effect_values = {counter:1, neutral:0, resisted:-1}。
+// 早先版本猜成 1=×0.5 / -1=×0.25，整个克制页都是错的（伤害差 4 倍）。
+console.log('\n· 克制映射以官方 effect_values 为准');
+const effOf = (a, d) => {
+  const A3 = A2.typeByName.get(a); const D3 = A2.typeByName.get(d);
+  return A2.effect.get(`${A3.id}:${D3.id}`);
+};
+ok(effOf('翼系', '草系') === 1, '翼打草 effect=1（counter）');
+ok(effOf('火系', '草系') === 1, '火打草 effect=1（counter）');
+ok(effOf('火系', '水系') === -1, '火打水 effect=-1（resisted）');
+const effVals = new Set(A2.data.matchups.map((m) => m[2]));
+ok([...effVals].every((v) => v === 1 || v === 0 || v === -1),
+  `克制只有 1/0/-1 三种取值（实际 ${[...effVals].sort().join(',')}）—— 游戏内无 ×0 免疫`);
+
+A2.view = 'types';
+ids.get('app').innerHTML = '';
+api.render();
+const typeHtml = ids.get('app').innerHTML;
+ok(/class="mx2"/.test(typeHtml), '克制页有 mx2（克制）格');
+ok(/class="mxh"/.test(typeHtml), '克制页有 mxh（抵抗）格');
+ok(!/mx-n1|mx-2|mx0"/.test(typeHtml), '不再使用旧的 mx-n1/mx-2/mx0 类名');
+ok(/克制 \/ 普通 \/ 抵抗/.test(typeHtml), '图例说明三档且没有免疫');
+ok(/最怕打/.test(typeHtml) && /最耐打/.test(typeHtml), '给出最怕打/最耐打速查');
+
+/* ---------------------------------------------------------- 计算器页面 */
+console.log('\n· 伤害计算页面');
+A2.calc.a = '20:1'; A2.calc.b = '43:1'; A2.calc.skillA = 7150060;
+A2.view = 'calc';
+ids.get('app').innerHTML = '';
+api.render();
+const calcHtml = ids.get('app').innerHTML;
+ok(/伤害计算/.test(calcHtml), '渲染出「伤害计算」页');
+ok(/岚鸟/.test(calcHtml) && /奇丽花/.test(calcHtml), '两侧分别显示岚鸟与奇丽花');
+ok(/142\.5/.test(calcHtml), '页面摊开了①有效威力 142.5');
+ok(/356/.test(calcHtml), '页面摊开了②显示威力 356');
+ok(/332/.test(calcHtml), '页面摊开了④预计伤害 332');
+ok(/0\.9024/.test(calcHtml), '页面显示等级系数 0.9024');
+ok(/需要/.test(calcHtml) && /下/.test(calcHtml), '给出「需要几下」');
+ok(/data-calc="level"/.test(calcHtml), '等级可调');
+ok(/data-calc="flatAdd"/.test(calcHtml), '固定加威力可调');
+ok(/data-calc="skillPct"/.test(calcHtml), '本次技能威力%可调');
+ok(/data-calc="atkStage"/.test(calcHtml) && /data-calc="defStage"/.test(calcHtml), '攻防等级可调');
+ok((calcHtml.match(/data-calc="skill"/g) || []).length === 2, '两侧各有一个技能选择框');
+// 伤害排序表
+ok(/伤害最高的技能/.test(calcHtml), '有「伤害最高的技能」排序表');
+const rankRows = (calcHtml.match(/data-calc-pick="/g) || []).length;
+ok(rankRows > 0, `排序表有 ${rankRows} 行`);
+// 排序必须是降序
+const rankDmg = [...calcHtml.matchAll(/data-calc-pick="\d+"[\s\S]*?<td class="num"><b>(\d+)<\/b>/g)].map((m) => Number(m[1]));
+ok(rankDmg.length > 1 && rankDmg.every((v, i) => i === 0 || rankDmg[i - 1] >= v),
+  `排序表按伤害降序（${rankDmg.slice(0, 5).join(' ≥ ')} …）`);
+// 岚鸟用扇风打奇丽花：排序表走的是基础参数（无全局加成），所以是 327；加上默认的
+// +20 固定威力 / +50% 后就是参考页的 332（上面已断言）
+ok(rankDmg[0] >= 327, `最高伤害 ≥ 327（实际 ${rankDmg[0]}）`);
+
 /* ---------------------------------------------------------- 传说技能 */
 // source_type=legendary 的技能只有 7 只精灵有，早先模板没渲染这一桶、被静默丢弃。
 console.log('\n· 传说技能');

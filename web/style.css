@@ -244,12 +244,14 @@ table.matrix td {
   width: 34px; height: 28px; text-align: center; border: none; border-radius: 6px;
   padding: 0; font-family: var(--mono); cursor: default;
 }
-.mx-1 { background: #35c46a; color: #fff; font-weight: 700; }
-.mx-2 { background: #1c8f4a; color: #fff; font-weight: 700; }
-.mx0 { background: var(--card-hi); color: var(--text-faint); }
-.mx-n1 { background: #b3564f55; color: var(--text); }
-.mx-n2 { background: #8d2f28cc; color: #fff; }
-.mx-na { background: transparent; }
+/* 克制矩阵配色：以官方 effect_values 为准
+   counter(1) = 克制 ×2  -> 绿色
+   neutral(0) = 普通 ×1  -> 中性灰
+   resisted(-1) = 抵抗 ×0.5 -> 红色
+   这个游戏没有免疫，所以没有"透明"格。 */
+.mx2 { background: #35c46a; color: #fff; font-weight: 700; }
+.mx1 { background: var(--card-hi); color: var(--text-faint); }
+.mxh { background: #b3564fcc; color: #fff; }
 
 /* ---------------------------------------------------------- 详情 */
 .modal { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; }
@@ -346,6 +348,50 @@ table.matrix td {
 .evo .node img { width: 52px; height: 52px; object-fit: contain; }
 .evo .node span { font-size: 12px; }
 .evo .arrow { color: var(--text-faint); font-size: 12px; text-align: center; }
+
+/* ------------------------------------------------------ 伤害计算 */
+.calc-panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+.calc-global {
+  display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center;
+  padding-bottom: 12px; margin-bottom: 14px; border-bottom: 1px dashed var(--line);
+}
+.calc-global label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
+.calc-global input[type="number"] { width: 74px; }
+.calc-global label.cb { gap: 4px; }
+.calc-two { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); }
+.calc-col { min-width: 0; }
+.calc-who { font-size: 12px; font-weight: 700; margin-bottom: 6px; color: var(--text-faint); }
+.calc-who.atk { color: var(--accent); }
+.calc-side { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+.calc-head { margin-bottom: 10px; }
+.calc-select {
+  width: 100%; padding: 6px 8px; margin-bottom: 8px;
+  background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 8px;
+}
+.calc-spirit { display: flex; align-items: center; gap: 10px; }
+.calc-spirit img { width: 52px; height: 52px; object-fit: contain; }
+.calc-spirit .cn { font-weight: 700; font-size: 15px; margin-bottom: 3px; }
+.calc-stats { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+.calc-stats .cs {
+  font-size: 11px; color: var(--text-dim); background: var(--card);
+  border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px;
+}
+.calc-stats .cs b { color: var(--text-faint); font-weight: 500; margin-right: 4px; }
+.calc-row { display: flex; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 10px; }
+.calc-row label { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-dim); }
+.calc-row input[type="number"] { width: 64px; }
+.calc-skill-label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 10px; }
+.calc-result { background: var(--card); border: 1px solid var(--line); border-radius: 9px; padding: 10px; }
+.calc-flow { display: grid; gap: 5px; margin-bottom: 9px; }
+.calc-flow .cf { display: flex; gap: 8px; font-size: 12px; align-items: baseline; }
+.calc-flow .cf span { flex: 0 0 68px; color: var(--text-faint); }
+.calc-flow .cf b { font-family: ui-monospace, Consolas, monospace; font-weight: 600; word-break: break-all; }
+.calc-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+.calc-out { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; text-align: center; }
+.calc-out .big { background: var(--bg-soft); border-radius: 8px; padding: 7px 4px; }
+.calc-out .big span { display: block; font-size: 11px; color: var(--text-faint); margin-bottom: 2px; }
+.calc-out .big b { font-size: 19px; color: var(--accent); }
+@media (max-width: 560px) { .calc-out { grid-template-columns: repeat(2, 1fr); } }
 
 /* ------------------------------------------------------ 术语 */
 .glossary { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }

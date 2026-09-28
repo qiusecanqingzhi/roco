@@ -28,7 +28,8 @@ const ICON_KEY = { hp: 'hp', patk: 'physical_attack', satk: 'special_attack', pd
 const STAT_MAX = { hp: 200, patk: 180, satk: 180, pdef: 180, sdef: 180, spd: 180 };
 const SRC_LABEL = { level: '升级学会', machine: '技能石', blood: '血脉', passive: '被动', legendary: '传说' };
 const GROUP_LABEL = { level_up: '升级学会', spirit_stone: '技能石', bloodline_elixir: '血脉' };
-const EFFECT_LABEL = { 2: '双重克制', 1: '克制', 0: '普通', '-1': '被抵抗', '-2': '双重抵抗' };
+// 官方 effect_values：counter=1（克制 ×2）、neutral=0（普通 ×1）、resisted=-1（抵抗 ×0.5）
+const EFFECT_LABEL = { 2: '双重克制', 1: '克制', 0: '普通', '-1': '抵抗', '-2': '双重抵抗' };
 
 /* ---------------------------------------------------------- 工具 */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -63,6 +64,18 @@ const STATE = {
   glossaryById: new Map(),
   statIconByStat: new Map(),
   skillIconById: new Map(),
+  typeByName: new Map(),
+  effect: new Map(),
+  // 伤害计算器的输入状态（两侧各自独立）
+  // 默认用「岚鸟 用 扇风 打 奇丽花」—— 与官方说明页的算例一致，打开就能对照
+  calc: {
+    a: '20:1', b: '43:1',
+    skillA: 7150060, skillB: null,
+    level: 60, ivA: 10, ivB: 10, natureA: 1, natureB: 1,
+    // 与官方说明页算例同参数：(75 + 20) × (1 + 50%) = 142.5 -> 显示威力 356 -> 伤害 332
+    flatAdd: 20, skillPct: 0.5, atkStage: 0, defStage: 0,
+    powerMul: 1, finalMul: 1, hpA: 0, hpB: 0, sortByDamage: true,
+  },
   view: 'spirits',
   filters: {
     spirits: { q: '', types: new Set(), sort: 'id', dir: 1, forms: false },
@@ -95,6 +108,10 @@ function index(data) {
   STATE.glossaryById = new Map((data.glossary ?? []).map((g) => [g.id, g]));
   STATE.statIconByStat = new Map((data.meta.statIcons ?? []).map((x) => [x.stat, x]));
   STATE.skillIconById = new Map(data.meta.skillIcons ?? []);
+  // 伤害计算用：系别名 -> 系别，以及 "攻:防" -> 克制级别
+  // （matchups 是 [attacking_type_id, defending_type_id, effect] 三元组）
+  STATE.typeByName = new Map(data.meta.types.map((t) => [t.name, t]));
+  STATE.effect = new Map((data.matchups ?? []).map(([a, d, e]) => [`${a}:${d}`, e]));
 }
 
 /* ============================================================
@@ -103,6 +120,9 @@ function index(data) {
 const typeName = (id) => STATE.typeById.get(id)?.name ?? '';
 const typeShort = (id) => STATE.typeById.get(id)?.short ?? typeName(id);
 const typeColor = (id) => STATE.typeById.get(id)?.color ?? '#7a8699';
+
+/** 数字显示：整数不带小数点，小数最多两位 */
+const fmt = (n) => (Number.isInteger(n) ? String(n) : Number(n.toFixed(2)).toString());
 
 /** 威力显示：基础威力 + 可变标记
  *  damage 数组的 [0] 才是基础威力；[1..] 是附加状态/阈值/上限哨兵，
@@ -209,7 +229,7 @@ function learnersOf(skillId) {
 /* ============================================================
    路由
    ============================================================ */
-const VIEWS = ['spirits', 'skills', 'types', 'glossary'];
+const VIEWS = ['spirits', 'skills', 'types', 'calc', 'glossary'];
 function route() {
   const hash = location.hash.replace(/^#\/?/, '') || 'spirits';
   const name = VIEWS.includes(hash) ? hash : 'spirits';
@@ -407,8 +427,10 @@ function viewTypes() {
   const tlist = STATE.data.meta.types;
   const ef = new Map();
   for (const [a, d, e] of STATE.data.matchups) ef.set(`${a}:${d}`, e);
-  const cellCls = (e) => (e === 2 ? 'mx-2' : e === 1 ? 'mx-1' : e === 0 ? 'mx0' : e === -1 ? 'mx-n1' : e === -2 ? 'mx-n2' : 'mx-na');
-  const cellText = (e) => (e === 2 ? '×2' : e === 1 ? '×1' : e === 0 ? '1' : e === -1 ? '½' : e === -2 ? '¼' : '');
+
+  // 格子显示：以官方 effect_values 为准（1=克制 ×2 / 0=普通 ×1 / -1=抵抗 ×0.5）
+  const cellCls = (e) => ({ 1: 'mx2', 0: 'mx1', '-1': 'mxh', 2: 'mx4', '-2': 'mxq' }[String(e)] ?? 'mx1');
+  const cellText = (e) => ({ 1: '×2', 0: '', '-1': '½', 2: '×4', '-2': '¼' }[String(e)] ?? '');
 
   // 矩阵里 18×18 格子很密，这里的系别只显示文字（加 icon-off 关掉图标），
   // 表头/行首允许显示图标
@@ -418,12 +440,23 @@ function viewTypes() {
       <th class="rowhead">${badge(atk.id)}</th>
       ${tlist.map((def) => {
         const e = ef.get(`${atk.id}:${def.id}`) ?? 0;
-        return `<td class="${cellCls(e)}" title="${esc(atk.name)} → ${esc(def.name)}：${EFFECT_LABEL[e] ?? e}">${cellText(e)}</td>`;
+        return `<td class="${cellCls(e)}" title="${esc(atk.name)} → ${esc(def.name)}：${EFFECT_LABEL[String(e)] ?? e}">${cellText(e)}</td>`;
       }).join('')}
     </tr>`).join('');
 
+  // 状态免疫（另一种机制，跟伤害倍率无关）
   const immun = tlist.filter((t) => t.immunities?.length).map((t) => `
     <tr><td class="mid">${badge(t.id)}</td><td>${t.immunities.map(esc).join('、')}</td></tr>`).join('');
+
+  // 用真实数据算出「最怕打」和「最耐打」的系别，作为速查结论
+  const tally = tlist.map((def) => ({
+    t: def,
+    weak: tlist.filter((atk) => ef.get(`${atk.id}:${def.id}`) === 1).length,
+    resist: tlist.filter((atk) => ef.get(`${atk.id}:${def.id}`) === -1).length,
+  }));
+  const mostWeak = [...tally].sort((a, b) => b.weak - a.weak).slice(0, 4);
+  const mostTough = [...tally].sort((a, b) => b.resist - a.resist).slice(0, 4);
+  const chip = (x) => `<span class="pill">${badge(x.t.id)}${x.weak} 个系别克制 / ${x.resist} 个系别抵抗</span>`;
 
   return `
   <div class="page-head">
@@ -432,20 +465,330 @@ function viewTypes() {
   </div>
   <div class="panel">
     <div class="frow" style="gap:14px;color:var(--text-dim);font-size:12px">
-      <span><b class="mx-1" style="padding:1px 6px;border-radius:4px">×1</b> 克制</span>
-      <span><b class="mx-2" style="padding:1px 6px;border-radius:4px">×2</b> 双重克制</span>
-      <span><b class="mx0" style="padding:1px 6px;border-radius:4px">1</b> 普通</span>
-      <span><b class="mx-n1" style="padding:1px 6px;border-radius:4px">½</b> 被抵抗</span>
-      <span><b class="mx-n2" style="padding:1px 6px;border-radius:4px">¼</b> 双重抵抗</span>
-      <span>读法：<b>行</b>=攻击方系别，<b>列</b>=防守方系别</span>
+      <span><b class="mx2" style="padding:1px 8px;border-radius:4px">×2</b> 克制</span>
+      <span><b class="mx1" style="padding:1px 8px;border-radius:4px">—</b> 普通</span>
+      <span><b class="mxh" style="padding:1px 8px;border-radius:4px">½</b> 抵抗</span>
+      <span>读法：<b>行</b>=攻击方系别，<b>列</b>=防守方系别；游戏内只有「克制 / 普通 / 抵抗」三档，没有免疫</span>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="frow" style="gap:8px;align-items:center">
+      <b style="font-size:13px">最怕打：</b>${mostWeak.map(chip).join('')}
+    </div>
+    <div class="frow" style="gap:8px;align-items:center;margin-top:8px">
+      <b style="font-size:13px">最耐打：</b>${mostTough.map(chip).join('')}
     </div>
   </div>
   <div class="panel matchup-wrap"><table class="matrix">
     <thead><tr><th></th>${header}</tr></thead>
     <tbody>${rows}</tbody>
   </table></div>
-  ${immun ? `<div class="panel"><h3 style="margin:0 0 8px;font-size:15px">状态免疫</h3>
+  ${immun ? `<div class="panel"><h3 style="margin:0 0 8px;font-size:15px">状态免疫（异常状态，与伤害倍率无关）</h3>
     <table><tbody>${immun}</tbody></table></div>` : ''}`;
+}
+
+/* ============================================================
+   伤害计算（按官方结算顺序实现）
+   ------------------------------------------------------------
+   公式来自对战模拟器的说明页，已用它的算例逐步验证通过：
+     (基础威力 + 固定加威力) x (1 + 本次技能威力%合计) = 有效威力
+     round(有效威力 x 本系 x 克制 x 攻防等级 x 杂项) = 显示威力
+     等级系数 = (等级 x 45 / 100 + 10) / 41
+     floor( round(攻击 x 显示威力 x 等级系数) / 防御 x 最终乘区 ) = 预计伤害
+   验证算例（岚鸟 扇风 打 奇丽花）：234/226、142.5、356、37/41、332、81% —— 全部吻合。
+
+   注意两点（容易算错）：
+   1. 等级系数必须用满精度（37/41），不能先四舍五入成 0.9，否则 332 会算成 340。
+   2. 内层 round 只作用于「攻击 x 显示威力 x 等级系数」，除完防御才 floor。
+   ============================================================ */
+
+/** 种族值 + 个体 + 性格 -> 实战面板值。性格：1 为无修正 */
+const panelStat = (base, iv = 10, nature = 1) =>
+  Math.round((Math.round(1.1 * (base + 3 * iv)) + 10) * nature) + 50;
+
+/** 等级系数 */
+const levelCoef = (level) => (level * 45 / 100 + 10) / 41;
+
+/** 攻击方的某个能力值（物攻/魔攻/物防/魔防）*/
+function panelOf(sp, which, iv = 10, nature = 1) {
+  const BASE = {
+    patk: 'patk', satk: 'satk', pdef: 'pdef', sdef: 'sdef', hp: 'hp', spd: 'spd',
+  };
+  const base = sp.stats[BASE[which]] ?? 0;
+  if (which === 'hp') return sp.stats.hp;           // 血量不走这条公式
+  return panelStat(base, iv, nature);
+}
+
+/**
+ * 克制倍率。
+ *
+ * ⚠ 官方 types.json 里的 effect_values 是：{ counter: 1, neutral: 0, resisted: -1 }
+ * 也就是说 1 = 克制 ×2、0 = 普通 ×1、-1 = 抵抗 ×0.5。
+ * 只靠"看起来像不像"猜语义会猜反 —— 早先版本把 1 当成 ×0.5、-1 当成 ×0.25，
+ * 整个系别克制页都是错的。这个映射必须以源数据的 effect_values 为准。
+ * 另外这个游戏没有 ×0 免疫（全库只有 0/1/-1 三种取值）。
+ */
+const EFFECT_MULT = { 1: 2, 0: 1, '-1': 0.5, 2: 4, '-2': 0.25 };
+
+/** 被攻击方可能有两个系别，倍率相乘。
+ *  ⚠ 参数是"系别 id 的数组"（spirit.types 存的是数字 id，如 [15]），
+ *  不是名字。早先版本把名字当作 id 传进来，结果永远命中不到，克制恒为 ×1。
+ *  技能侧同理：用 sk.typeId（数字），不要用 sk.type（名字）。 */
+function typeEffect(atkTypeId, defenderTypeIds) {
+  const atk = typeof atkTypeId === 'number' ? STATE.typeById.get(atkTypeId) : STATE.typeByName.get(atkTypeId);
+  if (!atk) return 1;
+  let mult = 1;
+  for (const raw of defenderTypeIds ?? []) {
+    const def = typeof raw === 'number' ? STATE.typeById.get(raw) : STATE.typeByName.get(raw);
+    if (!def) continue;
+    const m = EFFECT_MULT[String(STATE.effect.get(`${atk.id}:${def.id}`))];
+    if (m != null) mult *= m;
+  }
+  return mult;
+}
+
+/**
+ * 计算一次攻击。返回每个乘区的中间值，页面按这个逐步展示。
+ * opts: { level, iv, nature, flatAdd, skillPct, atkStage, defStage, powerMul, finalMul, targetHp, random }
+ */
+function calcDamage(atkSp, defSp, sk, opts = {}) {
+  const level = opts.level ?? 60;
+  const iv = opts.iv ?? 10;
+  const nature = opts.nature ?? 1;
+  const skillPct = opts.skillPct ?? 0;
+  const flatAdd = opts.flatAdd ?? 0;
+  const atkStage = opts.atkStage ?? 0;
+  const defStage = opts.defStage ?? 0;
+  const powerMul = opts.powerMul ?? 1;
+  const finalMul = opts.finalMul ?? 1;
+  const random = opts.random ?? 1;
+
+  const isPhysical = (sk?.cat ?? '') === '物理';
+  const isStatus = (sk?.cat ?? '') === '状态';
+  const atkKey = isPhysical ? 'patk' : 'satk';
+  const defKey = isPhysical ? 'pdef' : 'sdef';
+
+  const basePower = sk?.dmgMax ?? 0;
+  const atkStat = panelOf(atkSp, atkKey, iv, nature);
+  const defStat = panelOf(defSp, defKey, iv, nature);
+
+  // 攻防等级：攻击提升和防御下降都在分子，攻击下降和防御提升都在分母
+  const atkZone = ((1 + atkStage) / (1 + defStage)) || 1;
+
+  const effective = (basePower + flatAdd) * (1 + skillPct);
+  // 本系加成：技能的系别 id 出现在自身系别里（spirit.types 是 id 数组）
+  const stab = (atkSp.types ?? []).includes(sk?.typeId) ? 1.25 : 1;
+  const typeEff = typeEffect(sk?.typeId, defSp.types ?? []);
+  const shown = Math.round(effective * stab * typeEff * atkZone * powerMul);
+
+  const lvCoef = levelCoef(level);
+  const inner = Math.round(atkStat * shown * lvCoef);
+  const dmg = isStatus ? 0 : Math.floor((inner / defStat) * finalMul * random);
+
+  const targetHp = opts.targetHp ?? defSp.stats.hp;
+  const hits = dmg > 0 ? Math.ceil(targetHp / dmg) : Infinity;
+
+  return {
+    basePower, flatAdd, skillPct, effective, atkStat, defStat, atkKey, defKey, isPhysical, isStatus,
+    stab, typeEff, atkZone, powerMul, shown, lvCoef, level, inner, finalMul, random, dmg,
+    targetHp, hits, pct: targetHp > 0 ? dmg / targetHp : 0,
+  };
+}
+
+/* ============================================================
+   视图：伤害计算
+   ============================================================ */
+
+/** 该精灵能用的全部技能（升级 + 技能石 + 传说 + 血脉专属），带去重 */
+function usableSkillsOf(sp) {
+  const own = spiritSkillsOf(sp);
+  const out = [...own.level, ...own.machine, ...own.legendary];
+  const seen = new Set(out.map((s) => s.id));
+  for (const b of STATE.data.spiritBloodlines?.[`${sp.id}:${sp.formId}`] ?? []) {
+    if (!b.skillId || seen.has(b.skillId)) continue;
+    const sk = STATE.bySkill.get(b.skillId);
+    if (sk) { out.push({ ...sk, src: 'blood' }); seen.add(b.skillId); }
+  }
+  return out;
+}
+
+/** 下拉框：精灵选择 */
+function spiritOptions(selected) {
+  return STATE.data.spirits.map((s) => {
+    const key = `${s.id}:${s.formId}`;
+    const label = `#${s.id} ${s.name}${s.form ? '·' + s.form : ''}`;
+    return `<option value="${key}"${key === selected ? ' selected' : ''}>${esc(label)}</option>`;
+  }).join('');
+}
+
+/** 一侧的面板 + 技能选择 */
+function calcSide(side, sp, otherSp) {
+  const c = STATE.calc;
+  const isA = side === 'a';
+  const skills = usableSkillsOf(sp);
+  const curSkillId = isA ? c.skillA : c.skillB;
+  const curSkill = curSkillId ? STATE.bySkill.get(curSkillId) : null;
+  const iv = isA ? c.ivA : c.ivB;
+  const nature = isA ? c.natureA : c.natureB;
+  const hp = isA ? c.hpA : c.hpB;
+
+  const skillOpts = skills.map((s) => {
+    const tag = s.src === 'blood' ? '血脉' : s.src === 'legendary' ? '传说' : s.src === 'machine' ? '技能石' : '';
+    return `<option value="${s.id}"${s.id === curSkillId ? ' selected' : ''}>${esc(s.name)}${s.cat ? ` · ${esc(s.cat)}` : ''}${s.dmgMax ? ` · 威力${s.dmgMax}` : ''}${tag ? ` · ${tag}` : ''}</option>`;
+  }).join('');
+
+  const natureSel = (v) => [['1', '无性格'], ['1.1', '性格+'], ['0.9', '性格-']]
+    .map(([n, l]) => `<option value="${n}"${Number(n) === v ? ' selected' : ''}>${l}</option>`).join('');
+
+  // 实时结果（这一侧打对面）
+  let result = '';
+  if (curSkill) {
+    const r = calcDamage(sp, otherSp, curSkill, {
+      level: c.level, iv, nature,
+      flatAdd: c.flatAdd, skillPct: c.skillPct,
+      atkStage: c.atkStage, defStage: c.defStage,
+      powerMul: c.powerMul, finalMul: c.finalMul,
+      targetHp: isA ? (c.hpB || otherSp.stats.hp) : (c.hpA || otherSp.stats.hp),
+    });
+    result = calcResultBlock(side, sp, otherSp, curSkill, r);
+  }
+
+  return `
+  <div class="calc-side">
+    <div class="calc-head">
+      <select class="calc-select" data-calc="spirit" data-side="${side}">${spiritOptions(isA ? c.a : c.b)}</select>
+      <div class="calc-spirit">
+        ${imgTag(sp.head, sp.headOnline, sp.name, 'calc-head')}
+        <div>
+          <div class="cn">${esc(sp.name)}</div>
+          <div class="trow">${badges(sp.types)}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="calc-stats">
+      ${STAT_KEYS.map(({ stat, label }) => {
+        const base = sp.stats[stat] ?? 0;
+        const val = stat === 'hp' ? base : panelStat(base, iv, nature);
+        return `<span class="cs" title="种族值 ${base}"><b>${label}</b>${val}</span>`;
+      }).join('')}
+    </div>
+
+    <div class="calc-row">
+      <label>个体 <input type="number" id="civ-${side}" min="0" max="31" value="${iv}" data-calc="iv" data-side="${side}"></label>
+      <label>性格 <select id="cnat-${side}" data-calc="nature" data-side="${side}">${natureSel(nature)}</select></label>
+      <label>当前血量 <input type="number" id="chp-${side}" min="0" value="${hp || ''}" placeholder="${sp.stats.hp}" data-calc="hp" data-side="${side}"></label>
+    </div>
+
+    <label class="calc-skill-label">技能
+      <select class="calc-select" id="cskill-${side}" data-calc="skill" data-side="${side}">
+        <option value="">— 请选择技能 —</option>${skillOpts}
+      </select>
+    </label>
+
+    ${result}
+  </div>`;
+}
+
+/** 计算过程逐步展开 */
+function calcResultBlock(side, atkSp, defSp, sk, r) {
+  const zone = r.typeEff === 2 ? '×2 克制' : r.typeEff === 1 ? '×1 普通'
+    : r.typeEff === 0.5 ? '×½ 抵抗' : r.typeEff === 0.25 ? '×¼ 强抵抗' : r.typeEff === 0 ? '×0 免疫' : `×${r.typeEff}`;
+  const stabTxt = r.stab > 1 ? '×1.25（本系）' : '×1';
+  const hits = r.dmg <= 0 ? '—' : (Number.isFinite(r.hits) ? `${r.hits} 下` : '—');
+  return `
+  <div class="calc-result${r.dmg <= 0 ? ' zero' : ''}">
+    <div class="calc-flow">
+      <div class="cf"><span>①有效威力</span><b>(${r.basePower} + ${r.flatAdd}) × (1 + ${(r.skillPct * 100).toFixed(0)}%) = ${fmt(r.effective)}</b></div>
+      <div class="cf"><span>②显示威力</span><b>round(${fmt(r.effective)} × 本系${r.stab} × 克制${r.typeEff} × 等级${fmt(r.atkZone)}) = ${r.shown}</b></div>
+      <div class="cf"><span>③等级系数</span><b>(${r.level} × 45/100 + 10) / 41 = ${r.lvCoef.toFixed(4)}</b></div>
+      <div class="cf"><span>④预计伤害</span><b>floor(round(${r.atkStat} × ${r.shown} × ${r.lvCoef.toFixed(4)}) / ${r.defStat}) = ${r.dmg}</b></div>
+    </div>
+    <div class="calc-tags">
+      <span class="pill">${r.isPhysical ? '物理' : r.isStatus ? '状态' : '魔法'}</span>
+      <span class="pill">${esc(sk.type ?? '')}</span>
+      <span class="pill">${zone}</span>
+      <span class="pill">本系 ${stabTxt}</span>
+      <span class="pill">${r.atkKey === 'patk' ? '物攻' : '魔攻'} ${r.atkStat} vs ${r.defKey === 'pdef' ? '物防' : '魔防'} ${r.defStat}</span>
+    </div>
+    <div class="calc-out">
+      <div class="big"><span>预计伤害</span><b>${r.dmg}</b></div>
+      <div class="big"><span>对方血量</span><b>${r.targetHp}</b></div>
+      <div class="big"><span>占比</span><b>${(r.pct * 100).toFixed(1)}%</b></div>
+      <div class="big"><span>需要</span><b>${hits}</b></div>
+    </div>
+    ${r.isStatus ? '<div class="desc">状态技能不造成伤害（公式里按 0 处理）</div>' : ''}
+  </div>`;
+}
+
+function viewCalc() {
+  const c = STATE.calc;
+  const a = STATE.bySpirit.get(c.a) ?? STATE.data.spirits[0];
+  const b = STATE.bySpirit.get(c.b) ?? STATE.data.spirits[0];
+
+  // 排序模式：把攻击方(a)的全部技能按伤害从高到低排出来
+  let rankBlock = '';
+  if (c.sortByDamage) {
+    const list = usableSkillsOf(a)
+      .filter((s) => (s.dmgMax ?? 0) > 0 && s.cat !== '状态')
+      .map((s) => ({ s, r: calcDamage(a, b, s, { level: c.level, iv: c.ivA, nature: c.natureA, targetHp: c.hpB || b.stats.hp }) }))
+      .sort((x, y) => y.r.dmg - x.r.dmg)
+      .slice(0, 12);
+    rankBlock = `<div class="section"><h3>${esc(a.name)} 打 ${esc(b.name)}：伤害最高的技能 <span class="n">前 ${list.length}</span></h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th class="mid">图标</th><th>技能</th><th class="num">威力</th><th class="mid">系别</th>
+          <th class="num">显示威力</th><th class="num">预计伤害</th><th class="num">需要几下</th></tr></thead>
+        <tbody>${list.map(({ s, r }) => `
+          <tr class="clickable" data-calc-pick="${s.id}">
+            <td class="mid">${skillIconTag(s.id)}</td>
+            <td class="skill-name">${esc(s.name)}</td>
+            <td class="num">${powerCell(s)}</td>
+            <td class="mid">${s.typeId ? badge(s.typeId) : ''}</td>
+            <td class="num">${r.shown}</td>
+            <td class="num"><b>${r.dmg}</b></td>
+            <td class="num">${r.dmg > 0 ? r.hits : '—'}</td>
+          </tr>`).join('')}</tbody>
+      </table></div></div>`;
+  }
+
+  return `
+  <div class="page-head">
+    <h1>伤害计算</h1>
+    <span class="sub">按官方结算顺序逐步计算：有效威力 → 显示威力 → 等级系数 → 预计伤害</span>
+  </div>
+
+  <div class="calc-panel">
+    <div class="calc-global">
+      <label>等级 <input type="number" id="c-level" min="1" max="100" value="${c.level}" data-calc="level"></label>
+      <label>固定加威力 <input type="number" id="c-flatAdd" value="${c.flatAdd}" data-calc="flatAdd"></label>
+      <label>本次技能威力% <input type="number" id="c-skillPct" value="${c.skillPct * 100}" data-calc="skillPct"></label>
+      <label>攻击等级 <input type="number" id="c-atkStage" step="0.1" value="${c.atkStage}" data-calc="atkStage"></label>
+      <label>对方防御等级 <input type="number" id="c-defStage" step="0.1" value="${c.defStage}" data-calc="defStage"></label>
+      <label>威力乘区 <input type="number" id="c-powerMul" step="0.05" value="${c.powerMul}" data-calc="powerMul"></label>
+      <label>最终乘区 <input type="number" id="c-finalMul" step="0.05" value="${c.finalMul}" data-calc="finalMul"></label>
+      <label class="cb"><input type="checkbox" data-calc="sortByDamage"${c.sortByDamage ? ' checked' : ''}> 显示伤害排序</label>
+    </div>
+
+    <div class="calc-two">
+      <div class="calc-col">
+        <div class="calc-who atk">攻击方 A</div>
+        ${calcSide('a', a, b)}
+      </div>
+      <div class="calc-col">
+        <div class="calc-who def">防御方 B</div>
+        ${calcSide('b', b, a)}
+      </div>
+    </div>
+    <div class="desc" style="margin-top:10px;font-size:12px">
+      说明：① 有效威力 = (基础威力 + 固定加威力) × (1 + 本次技能威力%)；
+      ② 显示威力 = round(有效威力 × 本系 × 克制 × 攻防等级 × 威力乘区)；
+      ③ 等级系数 = (等级 × 45 / 100 + 10) / 41；
+      ④ 预计伤害 = floor(round(攻击 × 显示威力 × 等级系数) ÷ 防御 × 最终乘区)。
+      面板值由「种族值 + 个体 + 性格」换算，血量不走这条公式。公式未含连击/减伤等进阶项。
+    </div>
+  </div>
+
+  ${rankBlock}`;
 }
 
 /* ============================================================
@@ -846,13 +1189,50 @@ function selectSearch(i) {
 function render() {
   const app = $('#app');
   if (!STATE.data) return;
-  const fns = { spirits: viewSpirits, skills: viewSkills, types: viewTypes, glossary: viewGlossary };
+  const fns = { spirits: viewSpirits, skills: viewSkills, types: viewTypes, calc: viewCalc, glossary: viewGlossary };
   app.innerHTML = (fns[STATE.view] ?? viewSpirits)();
   bindView();
 }
 
 function bindView() {
   const app = $('#app');
+
+  // 伤害计算器：改任一项就重算（只重画计算区，不整页刷新）
+  const calcEl = $('#app .calc-panel');
+  if (calcEl) {
+    const refresh = () => { render(); };
+    for (const el of document.querySelectorAll('[data-calc]')) {
+      const key = el.dataset.calc;
+      if (el.type === 'checkbox') {
+        el.addEventListener('change', () => {
+          STATE.calc[key] = el.checked;
+          if (key === 'sortByDamage') refresh(); else render();
+        });
+      } else if (el.tagName === 'SELECT') {
+        el.addEventListener('change', () => {
+          const v = el.value;
+          if (key === 'spirit') { STATE.calc[el.dataset.side] = v; STATE.calc.skillA = null; STATE.calc.skillB = null; }
+          else if (key === 'skill') STATE.calc[el.dataset.side === 'a' ? 'skillA' : 'skillB'] = v ? Number(v) : null;
+          else if (key === 'nature') STATE.calc[el.dataset.side === 'a' ? 'natureA' : 'natureB'] = Number(v);
+          refresh();
+        });
+      } else {
+        el.addEventListener('input', debounce(() => {
+          const raw = el.value === '' ? '' : Number(el.value);
+          if (key === 'iv') STATE.calc[el.dataset.side === 'a' ? 'ivA' : 'ivB'] = raw === '' ? 0 : raw;
+          else if (key === 'hp') STATE.calc[el.dataset.side === 'a' ? 'hpA' : 'hpB'] = raw === '' ? 0 : raw;
+          else if (key === 'skillPct') STATE.calc.skillPct = (raw === '' ? 0 : raw) / 100;
+          else if (raw !== '') STATE.calc[key] = raw;
+          // 只重画结果区，避免输入框失焦
+          softRerender('calc');
+        }, 200));
+      }
+    }
+    // 伤害排序表里点一行 = 用那个技能
+    for (const tr of document.querySelectorAll('[data-calc-pick]')) {
+      tr.addEventListener('click', () => { STATE.calc.skillA = Number(tr.dataset.calcPick); render(); });
+    }
+  }
 
   // 精灵筛选
   const sq = $('#spiritQ');
@@ -1024,7 +1404,7 @@ $('#themeBtn').addEventListener('click', () => {
     route();
     console.log('[roco] 数据就绪', c);
     // 给自动化测试用的只读钩子（浏览器里也可以 console 里手动查）
-    window.__roco = { STATE, filterSpirits, filterSkills, spiritSkillsOf, learnersOf, spiritDetail, skillDetail, glossaryDetail, render, index };
+    window.__roco = { STATE, filterSpirits, filterSkills, spiritSkillsOf, learnersOf, spiritDetail, skillDetail, glossaryDetail, render, index, calcDamage, panelStat, levelCoef, typeEffect, usableSkillsOf };
   } catch (err) {
     $('#app').innerHTML = `
       <div class="empty">
