@@ -22,3 +22,6 @@ Thumbs.db
 
 # 测试用的临时 SSH 目录
 .ssh-test-home/
+
+# 提交信息临时文件（git commit -F 用）
+.commit-msg.txt
