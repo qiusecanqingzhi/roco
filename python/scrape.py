@@ -415,6 +415,9 @@ def build_sqlite(path: Path, locale: str, data: dict):
     CREATE TABLE IF NOT EXISTS glossary(
       locale TEXT, note_id INT, note TEXT, description TEXT, used_by_skill_count INT,
       used_by_skills TEXT, icon_key TEXT, PRIMARY KEY(locale, note_id));
+    CREATE TABLE IF NOT EXISTS stat_icons(
+      locale TEXT, stat TEXT, label TEXT, display_order INT, image_url TEXT,
+      PRIMARY KEY(locale, stat));
     CREATE INDEX IF NOT EXISTS idx_ss ON spirit_skill(locale, handbook_id);
     CREATE INDEX IF NOT EXISTS idx_sl ON skill_learner(locale, skill_id);
     CREATE INDEX IF NOT EXISTS idx_tm ON team_member(locale, team_id);
@@ -440,6 +443,7 @@ def build_sqlite(path: Path, locale: str, data: dict):
         "team_member": ["team_id", "team_name", "seat", "handbook_id", "petbase_id", "name", "form",
                         "types", "variant", "bloodline", "item"],
         "glossary": ["note_id", "note", "description", "used_by_skill_count", "used_by_skills", "icon_key"],
+        "stat_icons": ["stat", "label", "display_order", "image_url"],
         "type": ["id", "name", "short_name", "color", "status_immunities"],
         "type_matchup": ["attacking_type_id", "defending_type_id", "effect"],
     }
@@ -453,6 +457,7 @@ def build_sqlite(path: Path, locale: str, data: dict):
         "spirit_skill": ["locale", "handbook_id", "form_id", "skill_id", "source_type", "source_order"],
         "team": ["locale", "id"],
         "glossary": ["locale", "note_id"],
+        "stat_icons": ["locale", "stat"],
         "type": ["locale", "id"],
         "type_matchup": ["locale", "attacking_type_id", "defending_type_id"],
     }
@@ -546,6 +551,8 @@ def build_sqlite(path: Path, locale: str, data: dict):
     ins("team_member", tm_cols, data.get("team_members", []))
     g_cols = ["note_id", "note", "description", "used_by_skill_count", "used_by_skills", "icon_key"]
     ins("glossary", g_cols, data.get("glossary", []))
+    si_cols = ["stat", "label", "display_order", "image_url"]
+    ins("stat_icons", si_cols, data.get("stat_icons", []))
 
     db.commit()
     db.close()
@@ -606,7 +613,7 @@ def main(argv=None):
     by_id = index_types(types_payload)
 
     data = {"spirits": [], "skills": [], "spirit_skills": [], "skill_learners": [], "types": [], "matchups": [],
-            "teams": [], "team_members": [], "glossary": []}
+            "teams": [], "team_members": [], "glossary": [], "stat_icons": []}
     summary = {"locale": locale, "catalog_version": ver, "parts": {}}
 
     # ---- 精灵 --------------------------------------------------------
@@ -646,8 +653,18 @@ def main(argv=None):
 
         data["spirits"] = [spirit_row(d, by_id) for d in details]
         data["spirit_skills"] = [r for d in details for r in spirit_skill_rows(d, by_id)]
+        # 六维图标：每只精灵详情里都带同一份，取第一只有的即可
+        with_icons = next((d for d in details if d.get("stat_icons")), None)
+        data["stat_icons"] = [{
+            "stat": x.get("stat"),
+            "label": x.get("label"),
+            "display_order": i + 1,
+            "image_url": ORIGIN + x["image_url"] if x.get("image_url") else "",
+        } for i, x in enumerate((with_icons or {}).get("stat_icons") or [])]
         write_table(out_dir, "spirits", data["spirits"])
         write_table(out_dir, "spirit_skills", data["spirit_skills"])
+        if data["stat_icons"]:
+            write_table(out_dir, "stat_icons", data["stat_icons"])
         summary["parts"]["spirits"] = {"count": len(data["spirits"]), "with_detail": len(details)}
 
     # ---- 技能 --------------------------------------------------------

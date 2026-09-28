@@ -213,6 +213,13 @@ const glossary = rows('SELECT * FROM glossary WHERE locale = ? ORDER BY note_id'
   n: g.used_by_skill_count,
 }));
 
+// 六维图标：站点把它当 CSS mask 用（透明底 + 白色字形），颜色由页面自己染，
+// 所以这里只传 URL 与顺序，前端用 mask-image 渲染。
+const statIcons = rows('SELECT * FROM stat_icons WHERE locale = ? ORDER BY display_order', L).map((x) => {
+  const online = x.image_url || null;
+  return { stat: x.stat, label: x.label, order: x.display_order, icon: assetName(online), iconOnline: online };
+});
+
 db.close();
 
 /* ---------------------------------------------------------------- 写出 */
@@ -231,6 +238,7 @@ const meta = {
   },
   origin: ORIGIN,
   types,
+  statIcons,
 };
 
 // 精灵 -> 技能 / 技能 -> 可学精灵（都是对象映射，按需要查）
@@ -265,6 +273,7 @@ const addUrl = (u) => { if (u) urls.add(u); };
 for (const s of spirits) { addUrl(s.imgOnline); addUrl(s.headOnline); addUrl(s.portraitOnline); }
 for (const s of skills) addUrl(s.imgOnline);
 for (const t of types) addUrl(t.iconOnline);
+for (const x of statIcons) addUrl(x.iconOnline);
 writeJson(path.join(cfg.out, 'assets.json'), [...urls].sort());
 
 console.log(`\n✓ 完成（${((Date.now() - t0) / 1000).toFixed(1)}s）`);

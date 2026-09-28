@@ -9,12 +9,12 @@
 
 /* ---------------------------------------------------------- 常量 */
 const STAT_KEYS = [
-  { k: 'hp', label: '生命' },
-  { k: 'patk', label: '物攻' },
-  { k: 'satk', label: '魔攻' },
-  { k: 'pdef', label: '物防' },
-  { k: 'sdef', label: '魔防' },
-  { k: 'spd', label: '速度' },
+  { k: 'hp', label: '生命', icon: 'hp' },
+  { k: 'patk', label: '物攻', icon: 'physical_attack' },
+  { k: 'satk', label: '魔攻', icon: 'special_attack' },
+  { k: 'pdef', label: '物防', icon: 'physical_defense' },
+  { k: 'sdef', label: '魔防', icon: 'special_defense' },
+  { k: 'spd', label: '速度', icon: 'speed' },
 ];
 const STAT_MAX = { hp: 200, patk: 180, satk: 180, pdef: 180, sdef: 180, spd: 180 };
 const SRC_LABEL = { level: '升级学会', machine: '技能石', blood: '血脉', passive: '被动' };
@@ -52,6 +52,7 @@ const STATE = {
   bySkill: new Map(),
   typeById: new Map(),
   glossaryById: new Map(),
+  statIconByStat: new Map(),
   view: 'spirits',
   filters: {
     spirits: { q: '', types: new Set(), sort: 'id', dir: 1, forms: false },
@@ -79,6 +80,7 @@ function index(data) {
   for (const s of data.skills) STATE.bySkill.set(s.id, s);
   for (const t of data.meta.types) STATE.typeById.set(t.id, t);
   STATE.glossaryById = new Map((data.glossary ?? []).map((g) => [g.id, g]));
+  STATE.statIconByStat = new Map((data.meta.statIcons ?? []).map((x) => [x.stat, x]));
 }
 
 /* ------------------------------------------------------ 展示辅助 */
@@ -502,15 +504,30 @@ function radarChart(stats) {
   const dots = points.map(([x, y], i) =>
     `<circle class="radar-dot s-${STAT_KEYS[i].k}" cx="${f(x)}" cy="${f(y)}" r="3"/>`).join('');
 
-  // 标签：短名 + 数值，位置在轴的外侧
-  const labels = STAT_KEYS.map(({ k, label }, i) => {
-    const [x, y] = pt(i, R + 20);
+  // 外侧标签：图标（当 CSS mask 用，按数值染色）+ 数值
+  // 注意：内部统计键是缩写（patk/satk…），而 stat_icons 表用的是上游的完整名
+  // （physical_attack/special_attack…），靠 STAT_KEYS[].icon 做映射，
+  // 直接用 k 去查会只有 hp 命中（踩过）。
+  const labels = STAT_KEYS.map(({ k, label, icon: iconKey }, i) => {
+    const [x, y] = pt(i, R + 24);
     const v = stats[k] ?? 0;
-    const anchor = Math.abs(x - C) < 6 ? 'middle' : (x > C ? 'start' : 'end');
+    const ratio = Math.min(1, Math.max(0, v / (STAT_MAX[k] ?? 180)));
+    const icon = STATE.statIconByStat.get(iconKey);
+    const anchor = Math.abs(x - C) < 8 ? 'middle' : (x > C ? 'start' : 'end');
+    // 染色的比例：数值越低越淡（对应原站的 --stat-tint-high/low）
+    const tint = `--tint:${(ratio * 100).toFixed(0)}%`;
+    if (icon) {
+      const maskUrl = esc(icon.icon || icon.iconOnline);
+      return `<g class="radar-node" style="${tint}">
+        <rect class="radar-icon" x="${f(x - 11)}" y="${f(y - 20)}" width="22" height="22"
+              style="-webkit-mask-image:url('${maskUrl}');mask-image:url('${maskUrl}')"/>
+        <text class="radar-val" x="${f(x)}" y="${f(y + 12)}" text-anchor="${anchor}" dominant-baseline="middle">${v}</text>
+      </g>`;
+    }
     return `<text class="radar-label" x="${f(x)}" y="${f(y)}" text-anchor="${anchor}" dominant-baseline="middle">${label} <tspan class="radar-val">${v}</tspan></text>`;
   }).join('');
 
-  return `<svg class="radar" viewBox="0 0 ${SIZE} ${SIZE}" role="img" aria-label="六维种族值雷达图">
+  return `<svg class="radar" viewBox="0 0 ${SIZE} ${SIZE}" role="img" aria-label="六维种族值雷达图：${STAT_KEYS.map(({ k, label }) => `${label} ${stats[k] ?? 0}`).join('，')}">
     ${rings}${spokes}
     <path class="radar-area" d="${poly}"/>
     ${dots}${labels}

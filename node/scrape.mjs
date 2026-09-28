@@ -454,6 +454,7 @@ async function main() {
   let teamList = [];
   let teamMemberList = [];
   let glossaryList = [];
+  let statIcons = [];
   const typeById = makeTypeIndex({ types: await fetcher.getJson(`${S}/types.json`) });
   typesData = await fetcher.getJson(`${S}/types.json`);
 
@@ -498,8 +499,18 @@ async function main() {
       );
     }
 
+    // 六维图标：每只精灵的详情里都带同一份，取第一只有的即可
+    const withIcons = spiritsDetail.find((d) => d.stat_icons?.length);
+    statIcons = (withIcons?.stat_icons ?? []).map((x, i) => ({
+      stat: x.stat,
+      label: x.label,
+      display_order: i + 1,
+      image_url: x.image_url ? ORIGIN + x.image_url : '',
+    }));
+
     writeTable(outDir, 'spirits', spiritsRows);
     writeTable(outDir, 'spirit_skills', spiritSkillLinks);
+    if (statIcons.length) writeTable(outDir, 'stat_icons', statIcons);
     result.parts.spirits = { count: spiritsRows.length, with_detail: spiritsDetail.length };
   }
 
@@ -655,6 +666,7 @@ async function main() {
         teamList,
         teamMemberList,
         glossaryList,
+        statIcons,
       });
       process.stderr.write('· 已写入 out/roco.sqlite\n');
     } catch (e) {
@@ -725,11 +737,16 @@ const CREATE_SQL = {
       locale TEXT, note_id INT, note TEXT, description TEXT,
       used_by_skill_count INT, used_by_skills TEXT, icon_key TEXT,
       PRIMARY KEY (locale, note_id))`,
+  // 六维图标（生命/物攻/…）。站点把它当 CSS mask 用（透明底 + 白色字形），
+  // 颜色由页面按数值比例自己染，所以这里只存 URL 和顺序。
+  stat_icons: `CREATE TABLE IF NOT EXISTS stat_icons (
+      locale TEXT, stat TEXT, label TEXT, display_order INT, image_url TEXT,
+      PRIMARY KEY (locale, stat))`,
 };
 const COLUMN_TYPE = {
   type_count: 'INT', types: 'TEXT', seat: 'INT', skills: 'TEXT', note_id: 'INT',
   used_by_skill_count: 'INT', used_by_skills: 'TEXT', icon_key: 'TEXT',
-  source_order: 'INT',
+  source_order: 'INT', display_order: 'INT', image_url: 'TEXT',
 };
 /** 各表期望的主键，用于检测需要重建的旧结构 */
 const PK = {
@@ -740,6 +757,7 @@ const PK = {
   team: ['locale', 'id'],
   team_member: [],
   glossary: ['locale', 'note_id'],
+  stat_icons: ['locale', 'stat'],
   type: ['locale', 'id'],
   type_matchup: ['locale', 'attacking_type_id', 'defending_type_id'],
 };
@@ -787,6 +805,7 @@ async function buildSqlite(file, locale, data) {
     glossary: [
       'locale', 'note_id', 'note', 'description', 'used_by_skill_count', 'used_by_skills', 'icon_key',
     ],
+    stat_icons: ['locale', 'stat', 'label', 'display_order', 'image_url'],
   };
 
   // 表结构漂移处理：CREATE TABLE IF NOT EXISTS 不会改已存在的表，
@@ -796,6 +815,7 @@ async function buildSqlite(file, locale, data) {
     spirit: tables.spirit, skill: tables.skill, spirit_skill: tables.spirit_skill,
     skill_learner: tables.skill_learner, team: tables.team, team_member: tables.team_member,
     glossary: tables.glossary,
+    stat_icons: tables.stat_icons,
     type: ['locale', 'id', 'name', 'short_name', 'color', 'status_immunities'],
     type_matchup: ['locale', 'attacking_type_id', 'defending_type_id', 'effect'],
   };
@@ -864,7 +884,11 @@ async function buildSqlite(file, locale, data) {
     );
   }
 
-  // 队伍 / 术语
+  // 队伍 / 术语 / 六维图标
+  if (data.statIcons?.length) {
+    const stIcon = replaceLocale('stat_icons', tables.stat_icons);
+    for (const r of data.statIcons) stIcon.run(...tables.stat_icons.map((c) => (c === 'locale' ? locale : r[c] ?? null)));
+  }
   if (data.teamList?.length) {
     const stTeam = replaceLocale('team', tables.team);
     for (const r of data.teamList) stTeam.run(...tables.team.map((c) => (c === 'locale' ? locale : r[c] ?? null)));

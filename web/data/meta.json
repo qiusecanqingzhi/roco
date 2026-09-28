@@ -185,5 +185,49 @@
    "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_type/0018_20_ui_icon_species_20_png.webp",
    "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_type_0018_20_ui_icon_species_20_png.webp"
   }
+ ],
+ "statIcons": [
+  {
+   "stat": "hp",
+   "label": "生命",
+   "order": 1,
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_stat_0037_1_ui_pet_attribute_01_png.webp",
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_stat/0037_1_ui_pet_attribute_01_png.webp"
+  },
+  {
+   "stat": "physical_attack",
+   "label": "物攻",
+   "order": 2,
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_stat_0038_2_ui_pet_attribute_02_png.webp",
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_stat/0038_2_ui_pet_attribute_02_png.webp"
+  },
+  {
+   "stat": "special_attack",
+   "label": "魔攻",
+   "order": 3,
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_stat_0039_3_ui_pet_attribute_04_png.webp",
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_stat/0039_3_ui_pet_attribute_04_png.webp"
+  },
+  {
+   "stat": "physical_defense",
+   "label": "物防",
+   "order": 4,
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_stat_0040_4_ui_pet_attribute_03_png.webp",
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_stat/0040_4_ui_pet_attribute_03_png.webp"
+  },
+  {
+   "stat": "special_defense",
+   "label": "魔防",
+   "order": 5,
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_stat_0041_5_ui_pet_attribute_05_png.webp",
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_stat/0041_5_ui_pet_attribute_05_png.webp"
+  },
+  {
+   "stat": "speed",
+   "label": "速度",
+   "order": 6,
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_stat_0042_6_ui_pet_attribute_06_png.webp",
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_stat/0042_6_ui_pet_attribute_06_png.webp"
+  }
  ]
 }

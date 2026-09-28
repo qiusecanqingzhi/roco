@@ -71,9 +71,26 @@ ok(svg.length > 200, '详情里渲染出了雷达图 SVG');
 ok((svg.match(/class="radar-spoke"/g) || []).length === 6, `六条轴线（实际 ${(svg.match(/class="radar-spoke"/g) || []).length}）`);
 ok((svg.match(/class="radar-ring"/g) || []).length === 4, `四圈网格（实际 ${(svg.match(/class="radar-ring"/g) || []).length}）`);
 ok((svg.match(/class="radar-dot/g) || []).length === 6, '六个数据顶点');
-ok((svg.match(/class="radar-label"/g) || []).length === 6, '六个轴标签');
+
+console.log('\n· 外侧标签（图标 + 数值）');
+const hasIcons = /class="radar-icon"/.test(svg);
+if (hasIcons) {
+  ok((svg.match(/class="radar-icon"/g) || []).length === 6, '六个维度图标（当 CSS mask 用）');
+  ok((svg.match(/--tint:\d+%/g) || []).length === 6, '每个图标带按数值算出的染色比例 --tint');
+  ok(/mask-image:url\('assets\//.test(svg), 'mask 指向本地 assets 图片');
+  // 数值仍然以文字呈现，且六个都在
+  const vals = [...svg.matchAll(/class="radar-val"[^>]*>(\d+)</g)].map((m) => Number(m[1]));
+  ok(vals.length === 6, `六个数值文字（实际 ${vals.length}）`);
+  ok(vals.join(',') === '105,132,50,120,98,95', `数值与数据一致：${vals.join(',')}`);
+  // 染色比例：生命 105/200 = 52%
+  const tints = [...svg.matchAll(/--tint:(\d+)%/g)].map((m) => Number(m[1]));
+  ok(Math.abs(tints[0] - 52) <= 1, `生命染色比例 ≈52%（实际 ${tints[0]}%）`);
+  ok(tints[2] < tints[1], `魔攻(50) 染色比物攻(132) 更淡（${tints[2]}% < ${tints[1]}%）`);
+} else {
+  ok((svg.match(/class="radar-label"/g) || []).length === 6, '无图标时退回六个文字标签');
+}
 for (const label of ['生命', '物攻', '魔攻', '物防', '魔防', '速度']) {
-  ok(svg.includes(`>${label} <`), `含标签「${label}」`);
+  ok(svg.includes(`aria-label="六维种族值雷达图：`) && svg.includes(`${label} `), `无障碍标签含「${label}」`);
 }
 
 console.log('\n· 几何');

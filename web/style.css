@@ -264,7 +264,22 @@ table.matrix td {
 }
 .radar-dot { stroke: var(--bg-soft); stroke-width: 1; }
 .radar-label { fill: var(--text-dim); font-size: 11px; }
-.radar-val { fill: var(--text); font-weight: 600; font-size: 11.5px; }
+.radar-val { fill: var(--text); font-weight: 600; font-size: 12px; }
+
+/* 六维图标：站点给的是「透明底 + 白色字形」的模板图，按 CSS mask 用，
+   颜色由 --tint（数值占比）在原色与暗色之间混出来，亮/暗主题都清楚。 */
+.radar-icon {
+  background: color-mix(in srgb, var(--text-faint) calc(100% - var(--tint, 100%)), var(--accent) var(--tint, 100%));
+  -webkit-mask-size: contain; mask-size: contain;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  opacity: .95;
+}
+/* 浏览器不支持 mask 时不至于出现一个实心方块 */
+@supports not ((mask-image: url('')) or (-webkit-mask-image: url(''))) {
+  .radar-icon { background: none; }
+}
+.radar-node:hover .radar-val { fill: var(--accent); }
 .stat .k { color: var(--text-dim); font-size: 12px; }
 .stat .v { font-family: var(--mono); text-align: right; font-size: 13px; }
 .bar { height: 7px; border-radius: 4px; background: var(--card-hi); overflow: hidden; }

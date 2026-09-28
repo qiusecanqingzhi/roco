@@ -1,0 +1,18 @@
+feat(web): 六维雷达图改用维度图标（对齐原站做法）
+
+原站的六维图不是把图标当图片用，而是当 CSS mask：
+  <span style="--stat-icon-mask:url(.../0037_...webp)"></span>
+图标本身是透明底 + 白色字形，颜色由 --stat-tint-high/low 按数值比例混出来。
+我也照此实现：图标作 mask，颜色在 --text-faint 与 --accent 之间按数值插值，
+数值越高越亮，亮/暗主题都清楚；图标缺失时自动退回文字标签。
+
+顺带把 stat_icons 正规入库（之前只存在于抓取缓存的 JSON 里）：
+- node/scrape.mjs 与 python/scrape.py 都建表并写入，两套产出逐行一致（10 张表）
+- web/export-data.mjs 导出到 meta.statIcons，图片纳入 assets.json 清单，会随同步自动补齐
+
+修掉一个映射错误：内部统计键是缩写（patk/satk/spd），而 stat_icons 用上游完整名
+（physical_attack/speed），直接用 k 查会只有 hp 命中，已加显式映射 STAT_KEYS[].icon。
+
+其余：
+- tools/compare.mjs 补回 stat_icons 表核对
+- web/tools/test-radar.mjs 扩展断言：六个图标、染色比例随数值变化、mask 指向本地 assets
