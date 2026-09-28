@@ -348,8 +348,72 @@ ok(rankDmg.length > 1 && rankDmg.every((v, i) => i === 0 || rankDmg[i - 1] >= v)
 // +20 固定威力 / +50% 后就是参考页的 332（上面已断言）
 ok(rankDmg[0] >= 327, `最高伤害 ≥ 327（实际 ${rankDmg[0]}）`);
 
-/* ---------------------------------------------------------- 传说技能 */
+/* ---------------------------------------------------------- 性格 · 天分 */
+// 性格表源自 BiliWiki：30 种，每种 +1 项 / -1 项，每项属性当"增""减"各 5 次。
+// 修正系数 ±10%，且本作生命也受性格影响（与宝可梦不同）。
+console.log('\n· 性格 · 天分 · 资质');
+const lan2 = A2.data.spirits.find((s) => s.name === '岚鸟');   // 物攻种族 128
+const natures = api.NATURES;                        // [名称, 增, 减, 描述]
+ok(!!natures, '钩子暴露了 NATURES');
+ok(natures.length === 30, `性格 30 种（实际 ${natures.length}）`);
+ok(new Set(natures.map((n) => n[0])).size === 30, '性格无重名');
+
+// 均衡性：每项属性作为"增"和"减"各 5 次
+const upCount = {}, downCount = {};
+for (const [, u, d] of natures) { upCount[u] = (upCount[u] || 0) + 1; downCount[d] = (downCount[d] || 0) + 1; }
+const SIX = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'];
+ok(SIX.every((k) => upCount[k] === 5), `每项属性作为"增"各 5 次（${SIX.map((k) => upCount[k]).join(',')}）`);
+ok(SIX.every((k) => downCount[k] === 5), `每项属性作为"减"各 5 次（${SIX.map((k) => downCount[k]).join(',')}）`);
+ok(natures.every((n) => n[1] !== n[2]), '没有"增""减"同一项的性格');
+
+// 抽查几条已知性格（用 natureByName 取结构化对象）
+const byName = api.natureByName;
+ok(byName.get('固执').up === 'patk' && byName.get('固执').down === 'satk', '固执 = 物攻▲ 魔攻▼');
+ok(byName.get('胆小').up === 'spd' && byName.get('胆小').down === 'patk', '胆小 = 速度▲ 物攻▼');
+ok(byName.get('逞强').up === 'patk' && byName.get('逞强').down === 'hp', '逞强 = 物攻▲ 生命▼（本作生命也受性格影响）');
+
+// ±10% 修正：性格乘在公式内部的 round((…+10) × 性格) 那一步，不是乘在最终面板上。
+// 物攻种族 128 个体 10：基础 round(1.1×158)=174
+//   无性格 round((174+10)×1)+50 = 234
+//   +10%   round((174+10)×1.1)+50 = round(202.4)+50 = 252
+//   -10%   round((174+10)×0.9)+50 = round(165.6)+50 = 216
+ok(api.panelStat(128, 10, 1) === 234, `无性格 物攻面板 234（实际 ${api.panelStat(128, 10, 1)}）`);
+ok(api.panelStat(128, 10, 1.1) === 252, `+10% -> 252（实际 ${api.panelStat(128, 10, 1.1)}）`);
+ok(api.panelStat(128, 10, 0.9) === 216, `-10% -> 216（实际 ${api.panelStat(128, 10, 0.9)}）`);
+// 参考页把 128/个体10 显示为 234，且下拉框能把它变成其它值，说明性格参与在内层 round
+ok(api.panelStat(128, 10, 1.1) > api.panelStat(128, 10, 1), '+10% 面板高于无性格');
+ok(api.panelStat(128, 10, 0.9) < api.panelStat(128, 10, 1), '-10% 面板低于无性格');
+
+// 天分档位由个体推断
+ok(api.talentOf(10).label === '了不起的天分', `个体 10 -> 了不起的天分（实际 ${api.talentOf(10).label}）`);
+ok(api.talentOf(0).rank < api.talentOf(10).rank, '低个体档位低于满个体');
+
+// 页面渲染
+A2.nat = { spirit: '20:1', iv: 10, nature: '固执' };
+A2.view = 'nature';
+ids.get('app').innerHTML = '';
+api.render();
+const natHtml = ids.get('app').innerHTML;
+ok(/天分 · 资质 · 性格/.test(natHtml), '渲染出性格页');
+ok(/了不起的天分/.test(natHtml), '显示天分档位');
+ok(/固执/.test(natHtml), '显示当前性格');
+ok(/物攻 ▲/.test(natHtml) && /魔攻 ▼/.test(natHtml), '标出性格的增/减项');
+ok(/252/.test(natHtml), '算出固执下的物攻面板 252');
+ok((natHtml.match(/class="natal-ic"/g) || []).length >= 6, '六维都有图标');
+ok(/各属性最优性格/.test(natHtml), '有「各属性最优性格」推荐');
+ok(/全部 30 种性格/.test(natHtml), '有完整性格表');
+ok((natHtml.match(/data-nat-pick=/g) || []).length === 30, `性格表 30 行（实际 ${(natHtml.match(/data-nat-pick=/g) || []).length}）`);
+
+// 无性格时不修正
+A2.nat.nature = '';
+api.render();
+const neutralHtml = ids.get('app').innerHTML;
+ok(/未选性格/.test(neutralHtml), '无性格时给出不修正提示');
+ok(!/固执/.test(neutralHtml) || /无性格（不修正）/.test(neutralHtml), '无性格时不再标注性格增减');
+ok(/无性格/.test(neutralHtml), '「无性格」选项存在且为当前项');
 // source_type=legendary 的技能只有 7 只精灵有，早先模板没渲染这一桶、被静默丢弃。
+/* ---------------------------------------------------------- 传说技能 */
+// source_type=legendary 只有 7 只精灵有，早先模板没渲染这一桶、被静默丢弃。
 console.log('\n· 传说技能');
 const legendSpirits = Object.entries(api.STATE.data.spiritSkills)
   .filter(([, list]) => list.some((r) => r.src === 'legendary'))

@@ -66,7 +66,8 @@ const STATE = {
   skillIconById: new Map(),
   typeByName: new Map(),
   effect: new Map(),
-  // 伤害计算器的输入状态（两侧各自独立）
+  // 天分/资质/性格
+  nat: { spirit: '20:1', iv: 10, nature: '固执' },
   // 默认用「岚鸟 用 扇风 打 奇丽花」—— 与官方说明页的算例一致，打开就能对照
   calc: {
     a: '20:1', b: '43:1',
@@ -229,7 +230,7 @@ function learnersOf(skillId) {
 /* ============================================================
    路由
    ============================================================ */
-const VIEWS = ['spirits', 'skills', 'types', 'calc', 'glossary'];
+const VIEWS = ['spirits', 'skills', 'types', 'calc', 'nature', 'glossary'];
 function route() {
   const hash = location.hash.replace(/^#\/?/, '') || 'spirits';
   const name = VIEWS.includes(hash) ? hash : 'spirits';
@@ -501,6 +502,80 @@ function viewTypes() {
    1. 等级系数必须用满精度（37/41），不能先四舍五入成 0.9，否则 332 会算成 340。
    2. 内层 round 只作用于「攻击 x 显示威力 x 等级系数」，除完防御才 floor。
    ============================================================ */
+
+/* ============================================================
+   性格与天分（静态游戏数据，非抓取）
+   ------------------------------------------------------------
+   性格表源自 BiliWiki 性格表（经 rocokingdomworld.org 转载）：
+   30 种，每种提升 1 项、降低 1 项属性；每项属性作为"增"各 5 次、
+   作为"减"各 5 次 —— 启动时校验，对不上会打日志。
+   注意：本作生命也受性格影响，且性格修正系数是 ±10%（见 panelStat 的 nature）。
+   天分：四档，最高「了不起的天分」；同档下初始个体资质仍会不同，10 为最佳。
+   上游数据只有种族值，没有个体/性格/天分字段，所以这部分是静态知识而非抓取数据。
+   ============================================================ */
+const NATURES = [
+  ['大胆', 'patk', 'pdef', '喜欢独处、警惕性强、有些敏感、独立自主、似乎有点黏人'],
+  ['固执', 'patk', 'satk', '喜欢随心所欲、有点倔强、不服输、领地意识强、坚持自我'],
+  ['调皮', 'patk', 'sdef', '喜欢捣乱、精力充沛、活泼好动、偶尔会闯祸、经常撒娇'],
+  ['勇敢', 'patk', 'spd', '喜欢挑战、好奇心旺盛、无所畏惧、偶尔会冲动、坚韧不屈'],
+  ['逞强', 'patk', 'hp', '喜欢交朋友、自由自在、常与同伴打闹、偶尔会任性、经常撒娇'],
+  ['稳重', 'pdef', 'patk', '喜欢探险、有些冒失、总是一往直前、行动有些冲动、喜欢新鲜事物'],
+  ['天真', 'pdef', 'satk', '喜欢胡闹、好奇心旺盛、有些粗心、偶尔会恶作剧、喜欢寻求关注'],
+  ['懒散', 'pdef', 'sdef', '喜欢打瞌睡、常常偷懒、有些迟钝、偶尔会打呼噜、总是漫不经心'],
+  ['悠闲', 'pdef', 'spd', '喜欢看风景、从容不迫、悠然自得、偶尔会发呆、总是慢吞吞'],
+  ['坦率', 'pdef', 'hp', '喜欢宁静、善于忍耐、害怕陌生事物、行动谨慎、非常黏人'],
+  ['聪明', 'satk', 'patk', '喜欢独处、享受安静、谨小慎微、行动谨慎、总是一板一眼'],
+  ['专注', 'satk', 'pdef', '非常可靠、经常思考、一丝不苟、决策慎重、总是不慌不忙'],
+  ['偏执', 'satk', 'sdef', '喜欢玩闹、不拘小节、丢三落四、常常闯祸、活泼好动'],
+  ['冷静', 'satk', 'spd', '喜欢思考、临危不乱、行动谨慎、有些迟钝、总是慢条斯理'],
+  ['理性', 'satk', 'hp', '非常敏锐、专注力强、有些偏执、专心致志、一丝不苟'],
+  ['警惕', 'sdef', 'patk', '喜欢思考、偶尔会任性、行动谨慎、总是有条不紊、总是深思熟虑'],
+  ['温顺', 'sdef', 'pdef', '喜欢撒娇、乖巧听话、友善宽和、善于忍耐、温柔体贴'],
+  ['害羞', 'sdef', 'satk', '行动谨慎、有一点任性、偶尔会不听指令、善于忍耐、谨小慎微'],
+  ['慎重', 'sdef', 'spd', '争强好胜、经常吵闹、行为强势、不轻易放弃、容易得意忘形'],
+  ['焦虑', 'sdef', 'hp', '善于抗压、非常勤奋、吃苦耐劳、意志坚强、有些执拗'],
+  ['胆小', 'spd', 'patk', '对动静非常敏感、逃跑飞快、警惕性强、总是小心翼翼、有些粘人'],
+  ['急躁', 'spd', 'pdef', '容易生气、喜欢赛跑、迅疾如风、有些莽撞、行动迅捷'],
+  ['开朗', 'spd', 'satk', '爱与同伴嬉闹、热情阳光、喜欢自由驰骋、有些冲动、有时会心不在焉'],
+  ['莽撞', 'spd', 'sdef', '喜欢新奇事物、偶尔惹祸、总是三心二意、喜欢被夸奖、非常粘人'],
+  ['热情', 'spd', 'hp', '容易生气、缺乏耐心、喜欢赛跑、反应迅速、有点容易得意忘形'],
+  ['沉默', 'hp', 'patk', '喜欢独自沉思、总是默默无闻、总是十分被动、疏于交朋友、缺乏自信'],
+  ['忧郁', 'hp', 'pdef', '喜欢独自沉思、有些冷漠、善于观察、思维敏捷、总是深思熟虑'],
+  ['平和', 'hp', 'satk', '情绪稳定、喜欢拥抱、悠闲自在、值得信任、偶尔会偷吃'],
+  ['粗心', 'hp', 'sdef', '喜欢发呆、无精打采、有些消极、总是闷闷不乐、善于观察'],
+  ['踏实', 'hp', 'spd', '喜欢独处、非常黏人、缺乏安全感、总是忐忑不安、善于观察'],
+];
+const STAT_LABEL6 = { hp: '生命', patk: '物攻', satk: '魔攻', pdef: '物防', sdef: '魔防', spd: '速度' };
+
+/** 天分四档。个体资质 0~10，同档内初始个体仍会不同，10 为最佳。 */
+const TALENT_TIERS = [
+  { key: 'amazing', label: '了不起的天分', rank: 4, desc: '最优选择' },
+  { key: 'good', label: '不错的天分', rank: 3, desc: '可用' },
+  { key: 'normal', label: '普通的天分', rank: 2, desc: '建议用适格钥匙刷新' },
+  { key: 'poor', label: '平庸的天分', rank: 1, desc: '建议用适格钥匙刷新' },
+];
+/** 由个体资质反推天分档位（同档内个体值不同，所以这里按区间划分，仅供参考） */
+function talentOf(iv) {
+  if (iv >= 10) return TALENT_TIERS[0];
+  if (iv >= 7) return TALENT_TIERS[1];
+  if (iv >= 4) return TALENT_TIERS[2];
+  return TALENT_TIERS[3];
+}
+const natureByName = new Map(NATURES.map(([n, up, down, desc]) => [n, { name: n, up, down, desc }]));
+
+/** 自检：30 种性格，且每项属性当"增"/"减"各 5 次（对不上说明转录出错） */
+(function checkNatures() {
+  const up = {}, down = {};
+  for (const [, u, d] of NATURES) { up[u] = (up[u] || 0) + 1; down[d] = (down[d] || 0) + 1; }
+  const bad = [];
+  if (NATURES.length !== 30) bad.push(`数量 ${NATURES.length}≠30`);
+  for (const k of Object.keys(STAT_LABEL6)) {
+    if (up[k] !== 5) bad.push(`${k} 增 ${up[k]}≠5`);
+    if (down[k] !== 5) bad.push(`${k} 减 ${down[k]}≠5`);
+  }
+  if (new Set(NATURES.map((n) => n[0])).size !== 30) bad.push('有重名');
+  if (bad.length) console.warn('⚠ 性格数据校验失败:', bad.join('; '));
+})();
 
 /** 种族值 + 个体 + 性格 -> 实战面板值。性格：1 为无修正 */
 const panelStat = (base, iv = 10, nature = 1) =>
@@ -789,6 +864,151 @@ function viewCalc() {
   </div>
 
   ${rankBlock}`;
+}
+
+/* ============================================================
+   视图：天分 / 资质 / 性格
+   ============================================================ */
+const IV_LIST = [0, 7, 8, 9, 10];      // 与官方计算器一致的个体档
+
+/** 六维面板：个体全用同一个值，性格按名称取修正 */
+function panelStats6(sp, iv, natureName) {
+  const nat = natureByName.get(natureName);
+  const out = {};
+  for (const k of Object.keys(STAT_LABEL6)) {
+    const base = sp.stats[k] ?? 0;
+    const mult = !nat ? 1 : nat.up === k ? 1.1 : nat.down === k ? 0.9 : 1;
+    out[k] = {
+      base,
+      neutral: panelStat(base, iv, 1),
+      value: panelStat(base, iv, mult),
+      mult,
+    };
+  }
+  return out;
+}
+
+function viewNature() {
+  const c = STATE.nat;
+  const sp = STATE.bySpirit.get(c.spirit) ?? STATE.data.spirits[0];
+  const panel = panelStats6(sp, c.iv, c.nature);
+  const nat = natureByName.get(c.nature);
+  const tier = talentOf(c.iv);
+
+  const cell = (k) => {
+    const p = panel[k];
+    const d = p.value - p.neutral;
+    const mark = p.mult > 1 ? '<span class="nv-up">▲</span>' : p.mult < 1 ? '<span class="nv-down">▼</span>' : '';
+    const delta = d === 0 ? '<span class="desc">—</span>'
+      : `<b class="${d > 0 ? 'nv-pos' : 'nv-neg'}">${d > 0 ? '+' : ''}${d}</b>`;
+    return `<tr>
+      <td><span class="k">${STAT_LABEL6[k]}</span></td>
+      <td class="mid">${stateIcon(k)}</td>
+      <td class="num">${p.base}</td>
+      <td class="num">${p.neutral}</td>
+      <td class="num">${p.value}</td>
+      <td class="num">${mark}</td>
+      <td class="num">${delta}</td>
+    </tr>`;
+  };
+
+  // 各属性「最优性格」——按该属性最高面板值找，多个并列都列出
+  const best = {};
+  for (const k of Object.keys(STAT_LABEL6)) {
+    let top = -1;
+    for (const [n, up] of NATURES.map((x) => [x[0], x[1]])) {
+      if (up !== k) continue;                       // 只考虑「增」这一项是该属性的性格
+      const v = panelStat(sp.stats[k] ?? 0, c.iv, 1.1);
+      if (v > top) top = v;
+    }
+    const names = NATURES.filter((x) => x[1] === k).map((x) => `${x[0]}（减${STAT_LABEL6[x[2]]}）`);
+    best[k] = { value: top, names };
+  }
+
+  return `
+  <div class="page-head">
+    <h1>天分 · 资质 · 性格</h1>
+    <span class="sub">性格提升 1 项、降低 1 项（±10%，含生命）；同一天分下初始个体资质仍不同，个体 10 为最佳</span>
+  </div>
+
+  <div class="natal-panel">
+    <div class="natal-row">
+      <label>精灵
+        <select id="nat-spirit" class="natal-sel">${spiritOptions(c.spirit)}</select>
+      </label>
+      <label>个体资质
+        <select id="nat-iv" class="natal-sel">${IV_LIST.map((v) => `<option value="${v}"${v === c.iv ? ' selected' : ''}>${v}${v === 10 ? '（最佳）' : ''}</option>`).join('')}</select>
+      </label>
+      <label>性格
+        <select id="nat-nature" class="natal-sel">
+          <option value=""${c.nature === '' ? ' selected' : ''}>无性格（不修正）</option>
+          ${NATURES.map(([n, up, down]) => `<option value="${n}"${n === c.nature ? ' selected' : ''}>${n}（${STAT_LABEL6[up]}▲ ${STAT_LABEL6[down]}▼）</option>`).join('')}
+        </select>
+      </label>
+    </div>
+
+    <div class="talent-box">
+      <div class="tb-main">
+        <span class="k">天分档位</span>
+        <b class="tier tier-${tier.rank}">${tier.label}</b>
+        <span class="desc">${tier.desc}</span>
+      </div>
+      <div class="desc" style="margin-top:6px;font-size:12px">
+        按个体资质 ${c.iv} 推断。实际游戏里同一天分档内初始个体仍会不同，
+        所以「了不起的天分」也要看个体是否到 10；个体不足可用【能力钥匙】+1，
+        天分档位本身可用【适格钥匙】重新激活。
+      </div>
+    </div>
+
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>属性</th><th class="mid">图标</th><th class="num">种族值</th>
+        <th class="num">无性格</th><th class="num">当前性格</th><th class="num"></th><th class="num">变化</th>
+      </tr></thead>
+      <tbody>${Object.keys(STAT_LABEL6).map(cell).join('')}</tbody>
+    </table></div>
+
+    ${nat ? `<div class="natal-note">
+      当前性格「<b>${nat.name}</b>」：<span class="nv-up">${STAT_LABEL6[nat.up]} ▲</span> ×1.1　
+      <span class="nv-down">${STAT_LABEL6[nat.down]} ▼</span> ×0.9
+      <div class="desc" style="margin-top:4px">${esc(nat.desc)}</div>
+    </div>` : '<div class="natal-note">未选性格，六维不修正。<span class="desc">选一个性格即可看到面板变化。</span></div>'}
+  </div>
+
+  <div class="section"><h3>各属性最优性格 <span class="n">个体 ${c.iv}</span></h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>想提升</th><th class="num">面板值</th><th>可选性格（会降低的那项也要考虑）</th></tr></thead>
+      <tbody>${Object.entries(best).map(([k, v]) => `
+        <tr><td><b>${STAT_LABEL6[k]}</b></td><td class="num">${v.value}</td>
+        <td class="natal-names">${v.names.map((n) => `<span class="pill">${esc(n)}</span>`).join('')}</td></tr>`).join('')}
+      </tbody>
+    </table></div>
+    <div class="desc" style="margin-top:6px;font-size:12px">
+      只列「增」这一项是该属性的性格；配套的「减」项已在括号里标出，按精灵定位取舍
+      （输出手一般宁可减某项防御，也不要减速度）。
+    </div>
+  </div>
+
+  <div class="section"><h3>全部 30 种性格</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>性格</th><th class="mid">增加</th><th class="mid">减少</th><th>性格描述</th></tr></thead>
+      <tbody>${NATURES.map(([n, up, down, desc]) => `
+        <tr class="clickable" data-nat-pick="${esc(n)}">
+          <td><b>${esc(n)}</b></td>
+          <td class="mid"><span class="nv-up">${STAT_LABEL6[up]} ▲</span></td>
+          <td class="mid"><span class="nv-down">${STAT_LABEL6[down]} ▼</span></td>
+          <td class="desc">${esc(desc)}</td>
+        </tr>`).join('')}</tbody>
+    </table></div>
+  </div>`;
+}
+
+/** 六维图标（复用 stat_icons，当 mask 用） */
+function stateIcon(k) {
+  const icon = STATE.statIconByStat.get(ICON_KEY[k] ?? k);
+  if (!icon) return '';
+  const url = esc(icon.icon || icon.iconOnline);
+  return `<span class="natal-ic" style="-webkit-mask-image:url('${url}');mask-image:url('${url}')"></span>`;
 }
 
 /* ============================================================
@@ -1189,7 +1409,7 @@ function selectSearch(i) {
 function render() {
   const app = $('#app');
   if (!STATE.data) return;
-  const fns = { spirits: viewSpirits, skills: viewSkills, types: viewTypes, calc: viewCalc, glossary: viewGlossary };
+  const fns = { spirits: viewSpirits, skills: viewSkills, types: viewTypes, calc: viewCalc, nature: viewNature, glossary: viewGlossary };
   app.innerHTML = (fns[STATE.view] ?? viewSpirits)();
   bindView();
 }
@@ -1231,6 +1451,16 @@ function bindView() {
     // 伤害排序表里点一行 = 用那个技能
     for (const tr of document.querySelectorAll('[data-calc-pick]')) {
       tr.addEventListener('click', () => { STATE.calc.skillA = Number(tr.dataset.calcPick); render(); });
+    }
+  }
+
+  // 天分/资质/性格：改精灵/个体/性格即时重算
+  if ($('#nat-spirit')) {
+    $('#nat-spirit').addEventListener('change', (e) => { STATE.nat.spirit = e.target.value; render(); });
+    $('#nat-iv').addEventListener('change', (e) => { STATE.nat.iv = Number(e.target.value); render(); });
+    $('#nat-nature').addEventListener('change', (e) => { STATE.nat.nature = e.target.value; render(); });
+    for (const tr of document.querySelectorAll('[data-nat-pick]')) {
+      tr.addEventListener('click', () => { STATE.nat.nature = tr.dataset.natPick; render(); });
     }
   }
 
@@ -1404,7 +1634,11 @@ $('#themeBtn').addEventListener('click', () => {
     route();
     console.log('[roco] 数据就绪', c);
     // 给自动化测试用的只读钩子（浏览器里也可以 console 里手动查）
-    window.__roco = { STATE, filterSpirits, filterSkills, spiritSkillsOf, learnersOf, spiritDetail, skillDetail, glossaryDetail, render, index, calcDamage, panelStat, levelCoef, typeEffect, usableSkillsOf };
+    window.__roco = {
+      STATE, filterSpirits, filterSkills, spiritSkillsOf, learnersOf, spiritDetail, skillDetail,
+      glossaryDetail, render, index, calcDamage, panelStat, levelCoef, typeEffect, usableSkillsOf,
+      NATURES, talentOf, natureByName, panelStats6,
+    };
   } catch (err) {
     $('#app').innerHTML = `
       <div class="empty">

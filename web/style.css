@@ -393,6 +393,37 @@ table.matrix td {
 .calc-out .big b { font-size: 19px; color: var(--accent); }
 @media (max-width: 560px) { .calc-out { grid-template-columns: repeat(2, 1fr); } }
 
+/* ------------------------------------------------------ 性格 · 天分 */
+.natal-panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+.natal-row { display: flex; flex-wrap: wrap; gap: 12px 18px; margin-bottom: 12px; }
+.natal-row label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-dim); }
+.natal-sel {
+  min-width: 190px; padding: 6px 8px;
+  background: var(--bg-soft); color: var(--text); border: 1px solid var(--line); border-radius: 8px;
+}
+.talent-box { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
+.talent-box .tb-main { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.talent-box .k { font-size: 12px; color: var(--text-faint); }
+.tier { font-size: 16px; }
+.tier-4 { color: #f0a52a; }
+.tier-3 { color: #6fb8ff; }
+.tier-2 { color: var(--text-dim); }
+.tier-1 { color: var(--text-faint); }
+.natal-note { background: var(--bg-soft); border-left: 3px solid var(--accent); border-radius: 8px; padding: 8px 12px; font-size: 13px; }
+.nv-up { color: #4fc06d; font-weight: 600; }
+.nv-down { color: #e06a5f; font-weight: 600; }
+.nv-pos { color: #4fc06d; }
+.nv-neg { color: #e06a5f; }
+.natal-names { display: flex; flex-wrap: wrap; gap: 5px; }
+/* 六维图标：沿用 stat_icons 的图，当 mask 用 */
+.natal-ic {
+  display: inline-block; width: 20px; height: 20px; vertical-align: -4px;
+  background: var(--text-dim);
+  -webkit-mask-size: contain; mask-size: contain;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+}
+
 /* ------------------------------------------------------ 术语 */
 .glossary { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
 .gitem { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
