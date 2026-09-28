@@ -169,6 +169,16 @@ ok(/精灵图鉴/.test(bApp), '通过 JSON 分片也渲染出精灵图鉴');
 ok((bApp.match(/class="card"/g) || []).length === 466, 'JSON 分片路径下卡片数一致（466）');
 ok(!!B.window.__roco, 'JSON 分片路径下钩子同样可用');
 
+// 分片列表必须覆盖所有导出文件 —— 曾经漏了 spirit-bloodlines.json，
+// 导致托管（分片）模式下血脉区块空白，而 file://（bundle）模式正常。
+const bApi = B.window.__roco;
+ok((bApi.STATE.data.spiritBloodlines && Object.keys(bApi.STATE.data.spiritBloodlines).length) === 621,
+  `分片模式也载入了血脉数据（${Object.keys(bApi.STATE.data.spiritBloodlines || {}).length} 个键）`);
+bApi.spiritDetail('466:1');
+const bDetail = B.byId.get('modalBody').innerHTML;
+ok(/血脉技能/.test(bDetail), '分片模式下详情能渲染血脉区块');
+ok(/class="bl-icon"/.test(bDetail), '分片模式下血脉图标正常');
+
 console.log('');
 if (problems.length) {
   console.log(`✗ ${problems.length} 项不通过:`);

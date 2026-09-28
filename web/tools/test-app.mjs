@@ -91,7 +91,7 @@ const app = byId.get('app');
 const html = () => app.innerHTML;
 
 console.log('\n· 视图渲染');
-const viewOf = (h) => ({ spirits: '精灵图鉴', skills: '技能库', types: '系别克制', teams: '推荐队伍', glossary: '术语' }[h]);
+const viewOf = (h) => ({ spirits: '精灵图鉴', skills: '技能库', types: '系别克制', glossary: '术语' }[h]);
 
 // 精灵图鉴
 ok(!/正在加载数据/.test(html()), '启动后离开 loading 状态');
@@ -105,8 +105,8 @@ ok(/tbadge/.test(html()), '系别徽章已渲染');
 const imgSrcs = [...html().matchAll(/<img\b[^>]*\bsrc="([^"]+)"/g)].map((m) => m[1]).filter(Boolean);
 ok(imgSrcs.length > 0 && imgSrcs.every((s) => s.startsWith('assets/')), `卡片图片走本地路径（${imgSrcs.length} 张）`);
 
-// 切换视图
-for (const [h, label] of [['#/skills', '技能库'], ['#/types', '系别克制'], ['#/teams', '推荐队伍'], ['#/glossary', '术语']]) {
+// 切换视图（「推荐队伍」已按需求从页面移除，数据仍保留在 web/data/teams.json）
+for (const [h, label] of [['#/skills', '技能库'], ['#/types', '系别克制'], ['#/glossary', '术语']]) {
   location.hash = h;
   const body = html();
   ok(body.includes(label), `切到 ${h} 渲染「${label}」`);
@@ -119,13 +119,16 @@ for (const [h, label] of [['#/skills', '技能库'], ['#/types', '系别克制']
     const cells = (body.match(/<td class="mx/g) || []).length;
     ok(cells === 324, `克制矩阵 ${cells} 格（应为 324 = 18×18）`);
   }
-  if (h === '#/teams') {
-    ok((body.match(/class="team"/g) || []).length >= 12, '队伍卡片 ≥ 12 张');
-  }
   if (h === '#/glossary') {
     ok((body.match(/class="gitem"/g) || []).length === 54, '术语条目 54 条');
   }
 }
+
+// 队伍页已移除：旧书签访问 #/teams 应回退到默认视图，不能白屏
+location.hash = '#/teams';
+const fallback = html();
+ok(!/推荐队伍/.test(fallback), '页面里已无「推荐队伍」');
+ok(/精灵图鉴/.test(fallback), '访问 #/teams 回退到精灵图鉴（不是白屏）');
 
 // 回到精灵页并测试筛选逻辑（通过重新渲染 + 直接调用点击处理器较麻烦，这里验证数据层）
 location.hash = '#/spirits';
@@ -147,7 +150,8 @@ ok(missing.length === 0, `引用的本地图片都存在（缺失 ${missing.leng
 ok((D.spirits.find((s) => s.id === 1 && s.formId === 1)?.head || '').startsWith('assets/'), '样例精灵的 head 指向本地 assets/');
 
 // data/ 下的 JSON 也应完整（托管时用）
-const need = ['meta', 'spirits', 'skills', 'matchups', 'teams', 'glossary', 'spirit-skills', 'skill-learners'];
+// 页面按需加载的分片（teams 已不在页面里，故不列入；文件仍在 web/data/ 下）
+const need = ['meta', 'spirits', 'skills', 'matchups', 'glossary', 'spirit-skills', 'skill-learners', 'spirit-bloodlines'];
 const missJson = need.filter((n) => !fs.existsSync(path.join(WEB, 'data', n + '.json')));
 ok(missJson.length === 0, `web/data/*.json 齐备（缺 ${missJson.length} 个）`);
 

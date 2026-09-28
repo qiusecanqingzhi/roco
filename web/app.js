@@ -26,7 +26,7 @@ const STAT_KEYS = [
 /** 内部统计键 -> stat_icons 表里的键 */
 const ICON_KEY = { hp: 'hp', patk: 'physical_attack', satk: 'special_attack', pdef: 'physical_defense', sdef: 'special_defense', spd: 'speed' };
 const STAT_MAX = { hp: 200, patk: 180, satk: 180, pdef: 180, sdef: 180, spd: 180 };
-const SRC_LABEL = { level: '升级学会', machine: '技能石', blood: '血脉', passive: '被动' };
+const SRC_LABEL = { level: '升级学会', machine: '技能石', blood: '血脉', passive: '被动', legendary: '传说' };
 const GROUP_LABEL = { level_up: '升级学会', spirit_stone: '技能石', bloodline_elixir: '血脉' };
 const EFFECT_LABEL = { 2: '双重克制', 1: '克制', 0: '普通', '-1': '被抵抗', '-2': '双重抵抗' };
 
@@ -74,14 +74,17 @@ const STATE = {
 
 async function loadData() {
   if (window.ROCO_DATA) return window.ROCO_DATA;
-  // 没有单文件包时（例如托管环境只上传了 data/），退回逐文件 fetch
-  const names = ['meta', 'spirits', 'skills', 'matchups', 'teams', 'glossary', 'spirit-skills', 'skill-learners'];
+  // 没有单文件包时（例如托管环境只上传了 data/），退回逐文件 fetch。
+  // 注意：这里新增导出文件时必须同步加进来，否则托管环境下那块数据是空的
+  // （踩过：spirit-bloodlines.json 忘了加，导致线上血脉区块空白、本地 bundle 正常）。
+  const names = ['meta', 'spirits', 'skills', 'matchups', 'glossary',
+    'spirit-skills', 'skill-learners', 'spirit-bloodlines'];
   const loaded = await Promise.all(names.map((n) => fetch(`data/${n}.json`).then((r) => {
     if (!r.ok) throw new Error(`${n}.json HTTP ${r.status}`);
     return r.json();
   })));
-  const [meta, spirits, skills, matchups, teams, glossary, spiritSkills, skillLearners] = loaded;
-  return { meta, spirits, skills, matchups, teams, glossary, spiritSkills, skillLearners };
+  const [meta, spirits, skills, matchups, glossary, spiritSkills, skillLearners, spiritBloodlines] = loaded;
+  return { meta, spirits, skills, matchups, glossary, spiritSkills, skillLearners, spiritBloodlines };
 }
 
 function index(data) {
@@ -167,10 +170,13 @@ const plainDesc = (s) => String(s ?? '')
   .replace(/<\/>/g, '')
   .replace(/<[^<>]{1,80}>/g, '');
 
-// 精灵的技能：level 按解锁等级，machine/blood 按名字；被动单列
+// 精灵的技能：level 按解锁等级，machine 按名字；被动单列。
+// 没有 blood 桶：源数据 spirit_skill 的 source_type 只有 level/machine/passive/legendary，
+// 血脉技能在 spirit_bloodlines 里，由 bloodlineSection() 单独渲染。（`bucket` 那行是兜底，
+// 万一上游以后新增了别的 source_type 也不会丢数据。）
 function spiritSkillsOf(sp) {
   const raw = STATE.data.spiritSkills[`${sp.id}:${sp.formId}`] ?? [];
-  const out = { level: [], machine: [], blood: [], passive: [] };
+  const out = { level: [], machine: [], passive: [] };
   for (const r of raw) {
     const sk = STATE.bySkill.get(r.id);
     if (!sk) continue;
@@ -179,7 +185,6 @@ function spiritSkillsOf(sp) {
   }
   out.level.sort((a, b) => (a.lv ?? 999) - (b.lv ?? 999) || (a.name > b.name ? 1 : -1));
   out.machine.sort((a, b) => a.name.localeCompare(b.name, 'zh'));
-  out.blood.sort((a, b) => a.name.localeCompare(b.name, 'zh'));
   return out;
 }
 
@@ -194,7 +199,7 @@ function learnersOf(skillId) {
 /* ============================================================
    路由
    ============================================================ */
-const VIEWS = ['spirits', 'skills', 'types', 'teams', 'glossary'];
+const VIEWS = ['spirits', 'skills', 'types', 'glossary'];
 function route() {
   const hash = location.hash.replace(/^#\/?/, '') || 'spirits';
   const name = VIEWS.includes(hash) ? hash : 'spirits';
@@ -434,39 +439,6 @@ function viewTypes() {
 }
 
 /* ============================================================
-   视图：推荐队伍
-   ============================================================ */
-function viewTeams() {
-  const teams = STATE.data.teams;
-  return `
-  <div class="page-head">
-    <h1>推荐队伍</h1>
-    <span class="sub">共 ${teams.length} 支（来自站点整理的玩家配队）</span>
-  </div>
-  ${teams.length ? `<div class="teams">${teams.map(teamCard).join('')}</div>` : '<div class="empty">暂无队伍数据</div>'}`;
-}
-
-function teamCard(t) {
-  const members = (t.members ?? []).map((m) => {
-    const sp = STATE.bySpirit.get(`${m.id}:1`) ?? STATE.bySpirit.get(`${m.id}:${m.formId ?? 1}`);
-    const head = sp?.head, online = sp?.headOnline;
-    return `
-    <div class="member" data-spirit="${m.id}:1" title="${esc(m.name)}${m.bloodline ? ' · ' + esc(m.bloodline) : ''}">
-      ${head || online ? imgTag(head, online, m.name) : '<div style="height:56px"></div>'}
-      <div class="mn">${esc(m.name)}</div>
-      <div class="mb">${esc(m.bloodline || '')}</div>
-    </div>`;
-  }).join('');
-  return `
-  <div class="team">
-    <h3>${esc(t.name)}</h3>
-    <div class="by">${esc(t.author || '佚名')}${t.date ? ' · ' + esc(t.date) : ''}</div>
-    <div class="members">${members}</div>
-    ${t.item ? `<div class="item">战斗道具：<b>${esc(t.item)}</b></div>` : ''}
-  </div>`;
-}
-
-/* ============================================================
    视图：术语
    ============================================================ */
 function viewGlossary() {
@@ -668,7 +640,6 @@ function spiritDetail(key, lvFromSkillId = null) {
 
     <div class="section"><h3>升级学会 <span class="n">${skills.level.length}</span></h3>${skillTable(skills.level, true)}</div>
     ${skills.machine.length ? `<div class="section"><h3>技能石 <span class="n">${skills.machine.length}</span></h3>${skillTable(skills.machine, false)}</div>` : ''}
-    ${skills.blood.length ? `<div class="section"><h3>血脉 <span class="n">${skills.blood.length}</span></h3>${skillTable(skills.blood, false)}</div>` : ''}
 
     ${bloodlineSection(sp)}
 
@@ -858,7 +829,7 @@ function selectSearch(i) {
 function render() {
   const app = $('#app');
   if (!STATE.data) return;
-  const fns = { spirits: viewSpirits, skills: viewSkills, types: viewTypes, teams: viewTeams, glossary: viewGlossary };
+  const fns = { spirits: viewSpirits, skills: viewSkills, types: viewTypes, glossary: viewGlossary };
   app.innerHTML = (fns[STATE.view] ?? viewSpirits)();
   bindView();
 }
