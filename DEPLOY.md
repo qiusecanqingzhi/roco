@@ -83,6 +83,47 @@ https://<你的用户名>.github.io/roco-dex/
 | 抓取失败会怎样？ | 该次运行标红并停下，**不会**发布半成品；已有网址保持不变。 |
 | 想同步英文/日文？ | Run workflow 时选 `locale`；或在 workflow 里加一个 matrix 一次跑多个语言（注意 `web/data` 只能放一种语言，多语言要先改导出结构）。 |
 
+### ⚠️ 工作流会自己往仓库提交，这会让本地推送被拒
+
+有数据更新时，工作流最后会以 `github-actions[bot]` 身份提交 `web/data`、`web/assets` 并推回仓库。
+所以如果你本地也改过东西，`git push` 可能会看到：
+
+```
+! [rejected]  main -> main (fetch first)
+hint: Updates were rejected because the remote contains work that you do not have locally.
+```
+
+这**不是出错**，是远程确实多了东西（bot 的提交）。按提示做即可：
+
+```powershell
+git pull --rebase        # 把 bot 的提交拉下来，把你的提交放到它上面
+git push
+```
+
+如果冲突发生在 `web/data/*.json` 或 `web/data-bundle.js` 这类**生成物**上，不要去手工合并——
+直接从源码重新生成，让生成物覆盖掉冲突即可：
+
+```powershell
+git checkout --theirs web/data web/data-bundle.js   # 或用 -X ours 合并
+node web\export-data.mjs                            # 用源码重新生成
+node web\build-share.mjs
+git add -A && git commit -m "chore: 重新生成产物"
+git push
+```
+
+> 想彻底避免这类冲突：本地改完先 `git pull --rebase` 再推；或者干脆不在本地手改数据，
+> 只通过 Actions 的 Run workflow 来触发更新。
+
+### 为什么产物里不能放"生成时间"
+
+早期版本在 `web/data/meta.json` 与 `data-bundle.js` 里写了 `generatedAt` 时间戳，
+结果是：**每次运行产物都"有变化"，流水线每周都提交一个空改动并重写 2.9 MB 的文件**。
+（实测对比过：连续两次运行的差异只有时间戳，591 行数据一个字没变。）
+
+现在产物里只保留上游给的 `catalogVersion` —— 它是"数据是否真的更新"的唯一可靠标志。
+往产物里加字段前请想一想：**这个值每次构建都会变吗？会变就不要加。**
+
+
 ---
 
 ## 想换成别的托管
