@@ -461,6 +461,25 @@ table.matrix td {
   .nat-bar { flex: 1 1 100%; }
 }
 
+/* 详情弹窗里的加点半（更紧凑，因为弹窗宽度有限） */
+.natal-toolbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 10px 0 8px; padding-bottom: 8px; border-bottom: 1px dashed var(--line);
+  font-size: 12px; color: var(--text-dim);
+}
+.natal-toolbar label { display: flex; align-items: center; gap: 4px; }
+.natal-sel.sm { min-width: 72px; padding: 3px 6px; margin: 0; }
+.nat-line.compact { padding: 5px 10px; gap: 8px; }
+.nat-line.compact .nat-name { flex: 0 0 40px; font-size: 12px; }
+.nat-line.compact .nat-val { flex: 0 0 48px; font-size: 15px; }
+.nat-line.compact .nat-btn { padding: 2px 7px; font-size: 11px; }
+.nat-line.compact .nat-iv input { width: 50px; padding: 2px 5px; }
+.nat-line.compact .nat-ic { width: 17px; height: 17px; }
+.stat .v .gain {
+  display: inline-block; margin-left: 4px; font-size: 11px; font-weight: 600;
+  color: #4fc06d; background: #4fc06d22; border-radius: 5px; padding: 0 4px;
+}
+
 /* ------------------------------------------------------ 术语 */
 .glossary { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
 .gitem { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }

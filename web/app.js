@@ -120,6 +120,91 @@ function index(data) {
 }
 
 /* ============================================================
+   详情页里的加点面板
+   ------------------------------------------------------------
+   详情弹窗用【按精灵分开存储】的配置（STATE.spiritCalc），
+   不复用 STATE.nat —— 否则弹窗里改加点会串到「性格 · 天分」页面上。
+   雷达图与数值条都按当前配置实时重算，改一下就能看到形状变化。
+   ============================================================ */
+function spiritCalcOf(sp) {
+  const key = `${sp.id}:${sp.formId}`;
+  STATE.spiritCalc ??= new Map();
+  if (!STATE.spiritCalc.has(key)) {
+    const c = defaultNat(key);
+    // 详情页默认不预设加点/性格，避免"看起来像官方数据"
+    for (const k of STAT_ORDER) c.stats[k] = { iv: 0, nature: 'neutral' };
+    STATE.spiritCalc.set(key, c);
+  }
+  return STATE.spiritCalc.get(key);
+}
+
+/** 当前配置下的六维实测值（用于雷达图与数值条）*/
+function calcStatsOf(sp, c) {
+  const out = {};
+  for (const k of STAT_ORDER) out[k] = panelInt(k, sp.stats[k] ?? 0, c.stats[k].iv, c.stats[k].nature);
+  return out;
+}
+
+/** 雷达图 + 数值条 + 加点控件（整体可重画）*/
+function natalBlock(sp, c) {
+  const vals = calcStatsOf(sp, c);
+  const cap = ivOf(c.talent, c.star);
+  const invested = STAT_ORDER.filter((k) => c.stats[k].iv > 0).length;
+
+  const bars = STAT_ORDER.map((k) => {
+    const st = c.stats[k];
+    const base = sp.stats[k] ?? 0;
+    const v = vals[k];
+    const pct = Math.min(100, (v / (STAT_MAX[k] ?? 180)) * 100);
+    const mark = st.nature === 'up' ? '<b class="nv-up">▲</b>' : st.nature === 'down' ? '<b class="nv-down">▼</b>' : '';
+    // 个体这一项贡献了多少（便于判断"还值不值得继续投"）
+    const ivGain = v - panelInt(k, base, 0, st.nature);
+    return `<div class="stat">
+      <span class="k">${STAT_LABEL6[k]}${mark}</span>
+      <div class="bar s-${k}"><i style="width:${pct}%"></i></div>
+      <span class="v">${v}${ivGain > 0 ? `<span class="gain" title="其中个体贡献 +${ivGain}">+${ivGain}</span>` : ''}</span>
+    </div>`;
+  }).join('');
+
+  const controls = STAT_ORDER.map((k) => {
+    const st = c.stats[k];
+    const canEdit = st.iv > 0 || invested < 3;
+    const btn = (kind, label) => `<button class="nat-btn ${kind}${st.nature === kind ? ' on' : ''}"
+      data-nat-btn="${k}" data-nat-kind="${kind}">${label}</button>`;
+    return `<div class="nat-line compact">
+      <span class="nat-ic-wrap">${stateIcon(k)}</span>
+      <span class="nat-name">${STAT_LABEL6[k]}</span>
+      <span class="nat-val">${vals[k]}</span>
+      <span class="nat-ctl">
+        ${btn('up', '性格+')}${btn('down', '性格−')}
+        <span class="nat-iv">个体
+          <input type="number" id="dniv-${k}" min="0" max="${cap}" value="${st.iv}"
+                 data-nat-iv="${k}" data-in-modal="1" ${canEdit ? '' : 'disabled'}>
+          <span class="nat-iv-max">/${cap}</span></span>
+      </span>
+    </div>`;
+  }).join('');
+
+  return `<div id="natalBlock" data-spirit="${sp.id}:${sp.formId}">
+    <div class="stat-wrap">
+      ${radarChart(vals)}
+      <div class="stat-bars">${bars}</div>
+    </div>
+    <div class="natal-toolbar">
+      <label>天分 <select id="dnat-talent" class="natal-sel sm">
+        ${Array.from({ length: 11 }, (_, v) => `<option value="${v}"${v === c.talent ? ' selected' : ''}>${v}</option>`).join('')}
+      </select></label>
+      <label>星级 <select id="dnat-star" class="natal-sel sm">
+        ${[1, 2, 3, 4, 5].map((s) => `<option value="${s}"${s === c.star ? ' selected' : ''}>${s}★</option>`).join('')}
+      </select></label>
+      <span class="desc">个体上限 ${cap}　已投入 ${invested}/3 项</span>
+      <button class="chip" id="dnat-reset">清空</button>
+    </div>
+    <div class="nat-lines">${controls}</div>
+  </div>`;
+}
+
+/* ============================================================
    展示辅助
    ============================================================ */
 const typeName = (id) => STATE.typeById.get(id)?.name ?? '';
@@ -1128,6 +1213,9 @@ function openModal(html) {
   $('#modal').hidden = false;
   $('.modal-panel').scrollTop = 0;
   document.body.style.overflow = 'hidden';
+  // 弹窗内容不会走 bindView()，所以这里给弹窗内的控件绑事件
+  // （详情页的加点面板就靠这一步，否则按钮点了没反应）
+  bindNatalBlock();
 }
 function closeModal() {
   $('#modal').hidden = true;
@@ -1249,18 +1337,8 @@ function spiritDetail(key, lvFromSkillId = null) {
   if (!sp) return toast('找不到这只精灵');
   STATE.currentSpirit = key;          // 供「展开血脉」重画时定位当前精灵
   const skills = spiritSkillsOf(sp);
-  const statRows = STAT_KEYS.map(({ stat, label }) => {
-    const v = sp.stats[stat] ?? 0;
-    const pct = Math.min(100, (v / (STAT_MAX[stat] ?? 180)) * 100);
-    return `<div class="stat"><span class="k">${label}</span>
-      <div class="bar s-${stat}"><i style="width:${pct}%"></i></div>
-      <span class="v">${v}</span></div>`;
-  }).join('');
-  // 雷达图 + 数值条一起给：图看形状，条看精确值
-  const statBlock = `<div class="stat-wrap">
-    ${radarChart(sp.stats)}
-    <div class="stat-bars">${statRows}</div>
-  </div>`;
+  // 雷达图 + 数值条 + 加点控件：按这只精灵自己的配置实时重算
+  const statBlock = natalBlock(sp, spiritCalcOf(sp));
 
   const skillTable = (arr, withLv) => arr.length ? `
     <div class="table-wrap"><table>
@@ -1538,6 +1616,9 @@ function bindView() {
     }
   }
 
+  // 详情弹窗里的加点面板：改完只重画 #natalBlock（不重画整个弹窗，避免滚动位置丢失）
+  bindNatalBlock();
+
   // 天分/资质/性格：精灵/天分/星级 + 每项性格开关 + 每项个体投入
   if ($('#nat-spirit')) {
     $('#nat-spirit').addEventListener('change', (e) => { STATE.nat.spirit = e.target.value; render(); });
@@ -1696,6 +1777,78 @@ document.addEventListener('click', (e) => {
   if (!e.target.closest('#globalSearch')) $('#searchSuggest').hidden = true;
 });
 
+/* ---------------------------------------------------------- 详情弹窗加点面板 */
+/** 取弹窗里的加点面板。
+ *  ⚠ 必须从 #modalBody 往下找，不能用 document.getElementById：
+ *    natalBlock 是弹窗内部的节点，document.getElementById 只认文档里"注册过"的
+ *    id，拿不到它 —— 会返回 null，然后整个绑定静默跳过（点了没反应就是这么来的）。 */
+function natalBoxEl() {
+  return $('#modalBody')?.querySelector('#natalBlock') ?? null;
+}
+
+/** 重画弹窗里的加点面板（雷达图会跟着变）*/
+function redrawNatalBlock(key) {
+  const sp = STATE.bySpirit.get(key);
+  const box = natalBoxEl();
+  if (!sp || !box) return;
+  box.outerHTML = natalBlock(sp, spiritCalcOf(sp));
+  // outerHTML 换掉的是同一个"槽位"，重取一次再绑
+  const fresh = natalBoxEl();
+  if (fresh) delete fresh.dataset.bound;
+  bindNatalBlock();
+}
+
+/** 给弹窗里的加点面板绑事件。绑定的是容器本身（它会被整体换掉，所以每次重画后要重绑）*/
+function bindNatalBlock() {
+  const box = natalBoxEl();
+  if (!box || box.dataset.bound === '1') return;
+  box.dataset.bound = '1';
+  const key = box.dataset.spirit;
+  const sp = STATE.bySpirit.get(key);
+  if (!sp) return;
+  const c = spiritCalcOf(sp);
+
+  // 性格开关（每项独立，再点一次取消）
+  for (const btn of box.querySelectorAll('[data-nat-btn]')) {
+    btn.addEventListener('click', () => {
+      const k = btn.dataset.natBtn;
+      const kind = btn.dataset.natKind;
+      const st = c.stats[k];
+      st.nature = st.nature === kind ? 'neutral' : kind;
+      redrawNatalBlock(key);
+    });
+  }
+  // 天分 / 星级：个体上限变化，把超出的投入夹回
+  const talentSel = box.querySelector('#dnat-talent');
+  const starSel = box.querySelector('#dnat-star');
+  const clampIv = () => {
+    const cap = ivOf(c.talent, c.star);
+    for (const k of STAT_ORDER) if (c.stats[k].iv > cap) c.stats[k].iv = cap;
+  };
+  talentSel?.addEventListener('change', () => { c.talent = Number(talentSel.value); clampIv(); redrawNatalBlock(key); });
+  starSel?.addEventListener('change', () => { c.star = Number(starSel.value); clampIv(); redrawNatalBlock(key); });
+  box.querySelector('#dnat-reset')?.addEventListener('click', () => {
+    for (const k of STAT_ORDER) c.stats[k] = { iv: 0, nature: 'neutral' };
+    redrawNatalBlock(key);
+  });
+  // 个体投入：失焦/回车提交，最多 3 项
+  for (const inp of box.querySelectorAll('[data-nat-iv]')) {
+    const commit = () => {
+      const k = inp.dataset.natIv;
+      const cap = ivOf(c.talent, c.star);
+      let v = Number(inp.value);
+      if (!Number.isFinite(v)) v = 0;
+      v = Math.max(0, Math.min(cap, Math.round(v)));
+      const others = STAT_ORDER.filter((x) => x !== k && c.stats[x].iv > 0).length;
+      if (v > 0 && others >= 3) { toast('最多只能投入 3 项，请先清空一项'); v = 0; }
+      c.stats[k].iv = v;
+      redrawNatalBlock(key);
+    };
+    inp.addEventListener('change', commit);
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); } });
+  }
+}
+
 // 详情弹窗里点精灵/技能时要切换内容，需要单独处理（避免被上面的 data-skill 干扰）
 $('#modalBody').addEventListener('click', (e) => {
   const termEl = e.target.closest('[data-glossary]');
@@ -1774,6 +1927,7 @@ $('#themeBtn').addEventListener('click', () => {
       STATE, filterSpirits, filterSkills, spiritSkillsOf, learnersOf, spiritDetail, skillDetail,
       glossaryDetail, render, index, calcDamage, panelStat, levelCoef, typeEffect, usableSkillsOf,
       NATURES, talentOf, natureByName, panelValue, panelInt, ivOf, defaultNat, applyNature, stateIcon,
+      spiritCalcOf, calcStatsOf, natalBlock, bindNatalBlock, redrawNatalBlock,
     };
   } catch (err) {
     $('#app').innerHTML = `

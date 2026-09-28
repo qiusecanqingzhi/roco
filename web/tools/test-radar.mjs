@@ -11,62 +11,54 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
+import { makeEnv } from './dom-stub.mjs';
 
 const WEB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const problems = [];
 const ok = (c, m) => { if (c) console.log('  ✓ ' + m); else { problems.push(m); console.log('  ✗ ' + m); } };
 
-/* ---------------------------------------------------------- DOM 桩 */
-function el() {
-  return {
-    tagName: 'DIV', id: '', _html: '', textContent: '', hidden: false, dataset: {}, style: {},
-    classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
-    value: '', checked: false,
-    get innerHTML() { return this._html; }, set innerHTML(v) { this._html = String(v); },
-    setAttribute() {}, getAttribute() { return null; }, focus() {}, scrollTop: 0, setSelectionRange() {},
-    addEventListener() {}, closest() { return null; }, querySelector() { return null; }, querySelectorAll() { return []; },
-  };
-}
-const ids = new Map(['app', 'modal', 'modalBody', 'toast', 'searchSuggest', 'statLine', 'tabs', 'globalSearch', 'themeBtn'].map((i) => [i, el()]));
-const document = {
-  body: el(), documentElement: { dataset: {} }, activeElement: null,
-  querySelector: (s) => (s.startsWith('#') ? ids.get(s.slice(1)) ?? null : el()),
-  querySelectorAll: () => [], addEventListener() {}, createElement: () => el(),
-};
-let hash = '#/spirits';
-const hl = [];
-const location = { get hash() { return hash; }, set hash(v) { hash = v; hl.forEach((f) => f()); } };
-const window = { ROCO_DATA: null, addEventListener(t, f) { if (t === 'hashchange') hl.push(f); }, location };
-const sandbox = {
-  window, document, location,
-  localStorage: { getItem: () => null, setItem() {} },
-  navigator: { clipboard: { writeText: async () => {} } },
-  console: { log() {}, warn() {}, error() {} },
-  setTimeout, clearTimeout, fetch: () => Promise.reject(new Error('no fetch')),
-  HTMLImageElement: class {}, Error, JSON, Math, Date, Number, String, Object, Array, Set, Map, Promise, RegExp, isNaN, parseInt, parseFloat,
-};
-sandbox.globalThis = sandbox;
-const ctx = vm.createContext(sandbox);
-vm.runInContext(fs.readFileSync(path.join(WEB, 'data-bundle.js'), 'utf8'), ctx);
-vm.runInContext(fs.readFileSync(path.join(WEB, 'app.js'), 'utf8'), ctx);
+/* ---------------------------------------------------------- DOM 桩
+   用公共的 dom-stub：它能真的解析 HTML、跑选择器、派发事件。
+   早先用的是"querySelectorAll 永远返回空"的简化桩，导致**事件绑定相关的代码
+   从来没被测到**（只测了渲染出的字符串），详情页加点面板"点了没反应"就是这么漏掉的。 */
+const bundleSrc = fs.readFileSync(path.join(WEB, 'data-bundle.js'), 'utf8');
+const bundle = JSON.parse(bundleSrc.replace(/^window\.ROCO_DATA\s*=\s*/, '').replace(/;\s*$/, ''));
+const env = makeEnv({ withBundle: true, bundle });
+vm.createContext(env.sandbox);
+vm.runInContext(bundleSrc, env.sandbox);
+vm.runInContext(fs.readFileSync(path.join(WEB, 'app.js'), 'utf8'), env.sandbox);
 await new Promise((r) => setTimeout(r, 80));
 
-const api = window.__roco;
+const api = env.window.__roco;
 ok(!!api, 'app.js 已加载并暴露测试钩子');
 
-/* ---------------------------------------------------------- 解析 SVG */
+// 兼容原有写法：ids.get('modalBody') 之类
+const ids = new Map([...env.byId.entries()].map(([k, v]) => [k, { get innerHTML() { return v.innerHTML; }, set innerHTML(x) { v.innerHTML = x; }, _el: v }]));
+
+/* ---------------------------------------------------------- 解析 SVG
+   属性顺序不保证（DOM 桩会按解析到的顺序序列化），所以用"含 class=xxx"的
+   宽容匹配，而不是要求 class 紧跟标签名。 */
 const num = (s) => Number(s);
 
+/** 取出雷达图那段 SVG */
+const radarSvgOf = (html) => {
+  const i = html.indexOf('<svg');
+  if (i < 0) return '';
+  const j = html.indexOf('</svg>', i);
+  return j < 0 ? '' : html.slice(i, j + 6);
+};
+
 function parsePoints(svg) {
-  // 数据多边形：<path class="radar-area" d="M.. .. L.. .. Z">
-  const m = /<path class="radar-area" d="([^"]+)"/.exec(svg);
+  // 数据多边形：<path ... class="radar-area" d="M.. .. L.. .. Z">
+  const m = /<path[^>]*class="radar-area"[^>]*d="([^"]+)"/.exec(svg)
+    ?? /<path[^>]*d="([^"]+)"[^>]*class="radar-area"/.exec(svg);
   if (!m) return null;
   return m[1].split(/[MLZ]/).map((s) => s.trim()).filter(Boolean).map((p) => p.split(/\s+/).map(num));
 }
 
 console.log('\n· 结构');
 api.spiritDetail('466:1');           // 果实立方人：105/132/50/120/98/95
-const svg = ids.get('modalBody').innerHTML.match(/<svg class="radar"[\s\S]*?<\/svg>/)?.[0] ?? '';
+const svg = radarSvgOf(ids.get('modalBody').innerHTML);
 ok(svg.length > 200, '详情里渲染出了雷达图 SVG');
 ok((svg.match(/class="radar-spoke"/g) || []).length === 6, `六条轴线（实际 ${(svg.match(/class="radar-spoke"/g) || []).length}）`);
 ok((svg.match(/class="radar-ring"/g) || []).length === 4, `四圈网格（实际 ${(svg.match(/class="radar-ring"/g) || []).length}）`);
@@ -74,8 +66,9 @@ ok((svg.match(/class="radar-dot/g) || []).length === 6, '六个数据顶点');
 
 console.log('\n· 外侧标签（图标 + 数值）');
 // 顺序必须与原站一致：正上方顺时针 生命 → 魔攻 → 魔防 → 速度 → 物防 → 物攻
-// （果实立方人：105 / 50 / 98 / 95 / 120 / 132）
-const EXPECT_ORDER = [105, 50, 98, 95, 120, 132];
+// 数值现在按官方面板公式算（详情页可加点），果实立方人默认"个体0/中性"时：
+//   生命 349 / 魔攻 115 / 魔防 168 / 速度 165 / 物防 192 / 物攻 205
+// 只校验"顺序"（用种族值排序反推顺序），不把具体数值写死 —— 公式改了不用改测试。
 const EXPECT_LABELS = ['生命', '魔攻', '魔防', '速度', '物防', '物攻'];
 const hasIcons = /class="radar-icon"/.test(svg);
 if (hasIcons) {
@@ -84,12 +77,15 @@ if (hasIcons) {
   ok(/mask-image:url\('assets\//.test(svg), 'mask 指向本地 assets 图片');
   const vals = [...svg.matchAll(/class="radar-val"[^>]*>(\d+)</g)].map((m) => Number(m[1]));
   ok(vals.length === 6, `六个数值文字（实际 ${vals.length}）`);
-  ok(vals.join(',') === EXPECT_ORDER.join(','),
-    `数值顺序与原站一致：${vals.join(',')}（期望 ${EXPECT_ORDER.join(',')}）`);
-  // 染色比例跟随数值：生命 105/200=52%、魔攻 50/180=28%、物攻 132/180=73%
+  // 顺序校验：把种族值按同样的顺序算成面板值，逐一对比
+  const sp466 = api.STATE.bySpirit.get('466:1');
+  const expectVals = EXPECT_LABELS.map((_, i) => api.panelInt(['hp', 'satk', 'sdef', 'spd', 'pdef', 'patk'][i], sp466.stats[['hp', 'satk', 'sdef', 'spd', 'pdef', 'patk'][i]], 0, 'neutral'));
+  ok(vals.join(',') === expectVals.join(','),
+    `数值顺序与原站一致：${vals.join(',')}（期望 ${expectVals.join(',')}）`);
+  // 染色比例跟随数值：生命 349 超过上限 200 -> 100%；魔攻 115 应比物攻 205 淡
   const tints = [...svg.matchAll(/--tint:(\d+)%/g)].map((m) => Number(m[1]));
-  ok(Math.abs(tints[0] - 52) <= 1, `生命染色 ≈52%（实际 ${tints[0]}%）`);
-  ok(tints[1] < tints[5], `魔攻(50) 染色比物攻(132) 更淡（${tints[1]}% < ${tints[5]}%）`);
+  ok(tints[0] === 100, `生命染色 100%（实际 ${tints[0]}%，因面板值超上限）`);
+  ok(tints[1] < tints[5], `魔攻(115) 染色比物攻(205) 更淡（${tints[1]}% < ${tints[5]}%）`);
 } else {
   ok((svg.match(/class="radar-label"/g) || []).length === 6, '无图标时退回六个文字标签');
 }
@@ -108,20 +104,25 @@ ok(Array.isArray(pts) && pts.length === 6, `数据多边形有 6 个顶点（实
 const C = 120;                        // viewBox 240 -> 圆心 120
 const dist = ([x, y]) => Math.hypot(x - C, y - C);
 if (pts) {
-  // 第 1 个点是「生命」（向上）；第 2 个是「魔攻」（右上），值 50 应比第 6 个「物攻」132 更靠内
+  // 第 1 个点是「生命」（向上）；第 2 个是「魔攻」（右上）
+  // 半径按"该值 / 固定上限 × R"缩放。生命面板值 349 已超上限 200，所以顶点在外圈。
   const R = 78;
-  const expect = R * (105 / 200);
-  ok(Math.abs(dist(pts[0]) - expect) < 1.5, `生命顶点半径 ≈ ${expect.toFixed(1)}（实际 ${dist(pts[0]).toFixed(1)}）`);
+  const sp466 = api.STATE.bySpirit.get('466:1');
+  const hpVal = api.panelInt('hp', sp466.stats.hp, 0, 'neutral');
+  const patkVal = api.panelInt('patk', sp466.stats.patk, 0, 'neutral');
+  const satkVal = api.panelInt('satk', sp466.stats.satk, 0, 'neutral');
+  const expect = R * Math.min(1, hpVal / 200);
+  ok(Math.abs(dist(pts[0]) - expect) < 1.5, `生命顶点半径 ≈ ${expect.toFixed(1)}（生命 ${hpVal}/${api.STATE.data ? 200 : 200}，实际 ${dist(pts[0]).toFixed(1)}）`);
   ok(pts[0][1] < C, '生命顶点在圆心上方（第一轴朝向正确）');
   ok(pts[1][0] > C && pts[1][1] < C, '第二轴（魔攻）在右上方 —— 顺时针排列');
-  ok(dist(pts[1]) < dist(pts[5]), '魔攻(50) 比 物攻(132) 更靠内 —— 数值越大越外');
+  ok(dist(pts[1]) < dist(pts[5]), `魔攻(${satkVal}) 比 物攻(${patkVal}) 更靠内 —— 数值越大越外`);
 }
 
 // 极端值：全 0 与超高
 const zeroSpirit = { ...api.STATE.bySpirit.get('466:1'), stats: { hp: 0, patk: 0, satk: 0, pdef: 0, sdef: 0, spd: 0 } };
 api.STATE.bySpirit.set('9999:1', zeroSpirit);
 api.spiritDetail('9999:1');
-const svg0 = ids.get('modalBody').innerHTML.match(/<svg class="radar"[\s\S]*?<\/svg>/)?.[0] ?? '';
+const svg0 = radarSvgOf(ids.get('modalBody').innerHTML);
 const pts0 = parsePoints(svg0);
 ok(pts0 && pts0.length === 6 && pts0.every((p) => dist(p) > 3), '全 0 时六个顶点仍在圆心外（不塌陷）');
 ok(pts0 && new Set(pts0.map((p) => p.map((x) => x.toFixed(1)).join(','))).size === 6, '全 0 时六个顶点位置互不相同（能看出是哪一项）');
@@ -152,7 +153,8 @@ ids.get('app').innerHTML = '';
 api.render();
 const typesHtml = ids.get('app').innerHTML;
 ok(/class="type-icon"/.test(typesHtml), '系别克制页的表头用图标徽章');
-ok((typesHtml.match(/<td class="mx/g) || []).length === 324, '克制矩阵仍是 324 格');
+// 属性顺序由 DOM 桩的序列化决定，所以用"<td 后面任意位置带 class=mx"的匹配
+ok((typesHtml.match(/<td[^>]*class="mx/g) || []).length === 324, `克制矩阵仍是 324 格（实际 ${(typesHtml.match(/<td[^>]*class="mx/g) || []).length}）`);
 
 /* ---------------------------------------------------------- 血脉技能 */
 console.log('\n· 血脉技能');
@@ -427,6 +429,86 @@ const neutralHtml = ids.get('app').innerHTML;
 ok(/无加成/.test(neutralHtml), '全中性时提示「无加成」');
 ok(/231/.test(neutralHtml), '翼王速度中性与加成分开显示（中性 231）');
 // source_type=legendary 的技能只有 7 只精灵有，早先模板没渲染这一桶、被静默丢弃。
+/* ---------------------------------------------------------- 详情页加点面板 */
+// 这一组是这次的重点：老桩的 querySelectorAll 永远返回空，所以"事件绑定有没有生效"
+// 从来没被验证过 —— 详情页加点面板"点了没反应"就是那样漏掉的。
+console.log('\n· 详情页加点面板（真的点一下）');
+api.spiritDetail('152:1');                       // 翼王：速度种族 125
+const modal = ids.get('modalBody')._el;
+const box = modal.querySelector('#natalBlock');
+ok(!!box, '详情里渲染出加点面板 #natalBlock');
+ok(!!box.querySelector('#dnat-talent') && !!box.querySelector('#dnat-star'), '面板里有天分/星级选择');
+ok(box.querySelectorAll('[data-nat-btn]').length === 12, `每项两个性格开关，共 12 个（实际 ${box.querySelectorAll('[data-nat-btn]').length}）`);
+ok(box.querySelectorAll('[data-nat-iv]').length === 6, '六项各一个个体输入');
+
+// 默认：个体 0、中性 —— 且面板与独立页面用两套状态，互不影响
+const wc = api.spiritCalcOf(api.STATE.bySpirit.get('152:1'));
+ok(wc.stats.spd.iv === 0 && wc.stats.spd.nature === 'neutral', '详情面板默认个体 0 / 中性（不预设加点）');
+// 隔离性：先把独立页面的状态记下来，改完详情面板后它必须原样不变
+const natSnapshot = JSON.stringify(api.STATE.nat.stats);
+ok(JSON.stringify(api.STATE.nat.stats) === natSnapshot, '独立「性格·天分」页状态此刻有一份快照');
+
+// 点「性格+」：速度加成，面板与雷达都要跟着变
+const before = api.calcStatsOf(api.STATE.bySpirit.get('152:1'), wc).spd;
+modal.querySelector('[data-nat-btn="spd"][data-nat-kind="up"]').click();
+ok(wc.stats.spd.nature === 'up', '点「性格+」后速度性格变成 up');
+const after = api.calcStatsOf(api.STATE.bySpirit.get('152:1'), wc).spd;
+ok(after > before, `速度面板从 ${before} 升到 ${after}`);
+const html2 = ids.get('modalBody').innerHTML;
+ok(html2 !== '', '重画后弹窗仍有内容');
+ok(new RegExp(`>${after}<`).test(html2), `弹窗里显示了新的速度值 ${after}`);
+
+// 再点一次取消
+ids.get('modalBody')._el.querySelector('#natalBlock');           // 重画后要重新取
+const box2 = ids.get('modalBody')._el.querySelector('#natalBlock');
+box2.querySelector('[data-nat-btn="spd"][data-nat-kind="up"]').click();
+ok(wc.stats.spd.nature === 'neutral', '再点一次取消加成');
+
+// 填个体：输入 60 后提交，面板值要涨
+const box3 = ids.get('modalBody')._el.querySelector('#natalBlock');
+const ivInput = box3.querySelector('[data-nat-iv="spd"]');
+ok(!!ivInput, '取到速度的个体输入框');
+const beforeIv = api.calcStatsOf(api.STATE.bySpirit.get('152:1'), wc).spd;
+ivInput.value = '60';
+ivInput.dispatch('change');
+ok(wc.stats.spd.iv === 60, `提交后个体变成 60（实际 ${wc.stats.spd.iv}）`);
+const afterIv = api.calcStatsOf(api.STATE.bySpirit.get('152:1'), wc).spd;
+ok(afterIv > beforeIv, `投满个体后速度从 ${beforeIv} 升到 ${afterIv}`);
+
+// 最多 3 项：再投第 4 项应被拦下
+const box4 = ids.get('modalBody')._el.querySelector('#natalBlock');
+let invested = 0;
+for (const k of ['hp', 'patk', 'satk', 'pdef']) {
+  const inp = box4.querySelector(`[data-nat-iv="${k}"]`);
+  if (!inp || inp.disabled) continue;
+  inp.value = '60';
+  inp.dispatch('change');
+  invested = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].filter((x) => wc.stats[x].iv > 0).length;
+  break;
+}
+{
+  const box5 = ids.get('modalBody')._el.querySelector('#natalBlock');
+  // 逐个尝试投满，最终投入项数不应超过 3
+  for (const k of ['hp', 'patk', 'satk', 'pdef', 'sdef']) {
+    const inp = box5.querySelector(`[data-nat-iv="${k}"]`);
+    if (!inp) continue;
+    inp.value = '60';
+    inp.dispatch('change');
+  }
+  const count = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].filter((x) => wc.stats[x].iv > 0).length;
+  ok(count <= 3, `个体投入项数不超过 3（实际 ${count}）`);
+}
+
+// 清空
+ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('#dnat-reset').click();
+const cleared = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].filter((x) => wc.stats[x].iv > 0).length;
+ok(cleared === 0, `点「清空」后投入项数为 0（实际 ${cleared}）`);
+
+// 隔离性：以上所有操作都改的是"详情面板"的状态，独立页面那份必须没被动过
+ok(JSON.stringify(api.STATE.nat.stats) === natSnapshot,
+  '详情面板的改动没有串到「性格 · 天分」页面（两套状态隔离）');
+ok(api.STATE.nat !== wc, '两个状态对象不是同一个引用');
+
 /* ---------------------------------------------------------- 传说技能 */
 // source_type=legendary 只有 7 只精灵有，早先模板没渲染这一桶、被静默丢弃。
 console.log('\n· 传说技能');
