@@ -71,9 +71,8 @@ console.log('\n· 外侧标签（图标 + 数值）');
 const EXPECT_LABELS = ['生命', '魔攻', '魔防', '速度', '物防', '物攻'];
 const sp466 = api.STATE.bySpirit.get('466:1');
 const PANEL_KEYS = ['hp', 'satk', 'sdef', 'spd', 'pdef', 'patk'];
-// 详情页默认个体：投满"种族值最高的三项"（由 defaultInvestSet 决定），其余 0
-const defSet466 = api.defaultInvestSet(sp466);
-const DEF_IV_OF = (k) => (defSet466.has(k) ? 60 : 0);
+// 详情页【初始都不投个体】（用户要求：点按钮哪项加 60），所以期望值一律按个体 0 算
+const DEF_IV_OF = () => 0;
 const hpVal = api.panelInt('hp', sp466.stats.hp, DEF_IV_OF('hp'), 'neutral');
 const patkVal = api.panelInt('patk', sp466.stats.patk, DEF_IV_OF('patk'), 'neutral');
 const satkVal = api.panelInt('satk', sp466.stats.satk, DEF_IV_OF('satk'), 'neutral');
@@ -423,7 +422,7 @@ ok(/个体值/.test(natHtml), '显示个体值');
 ok(/速度/.test(natHtml) && /物攻/.test(natHtml), '六维都有行');
 ok(/267/.test(natHtml), '算出翼王速度 267（与游戏实测一致）');
 ok((natHtml.match(/data-nat-btn="/g) || []).length === 12, `每项两个性格开关，共 12 个（实际 ${(natHtml.match(/data-nat-btn="/g) || []).length}）`);
-ok((natHtml.match(/data-nat-iv="/g) || []).length === 6, `六项各一个个体输入（实际 ${(natHtml.match(/data-nat-iv="/g) || []).length}）`);
+ok((natHtml.match(/data-nat-iv="/g) || []).length === 6, `六项各一个个体输入（实际 ${(natHtml.match(/data-nat-iv="/g) || []).length}）—— 这是独立「性格·天分」页，仍用输入框`);
 ok((natHtml.match(/data-nat-apply="/g) || []).length === 30, `性格套用表 30 行（实际 ${(natHtml.match(/data-nat-apply="/g) || []).length}）`);
 ok(/data-nat-kind="up"/.test(natHtml) && /data-nat-kind="down"/.test(natHtml), '同时有"性格+"与"性格-"开关');
 
@@ -445,30 +444,28 @@ const box = modal.querySelector('#natalBlock');
 ok(!!box, '详情里渲染出加点面板 #natalBlock');
 ok(!box.querySelector('#dnat-talent') && !box.querySelector('#dnat-star'), '详情面板里没有天分/星级下拉（个体上限常驻 60）');
 ok(box.querySelectorAll('[data-nat-btn]').length === 12, `每项两个性格开关，共 12 个（实际 ${box.querySelectorAll('[data-nat-btn]').length}）`);
-ok(box.querySelectorAll('[data-nat-iv]').length === 6, '六项各一个个体输入');
-// 输入框的 max 都应是 60
-const maxes = [...box.querySelectorAll('[data-nat-iv]')].map((i) => i.getAttribute('max'));
-ok(maxes.length === 6 && maxes.every((m) => m === '60'), `六个输入框上限都是 60（实际 ${maxes.join(',')}）`);
+ok(box.querySelectorAll('[data-nat-ivbtn]').length === 6, `六项各一个「个体」按钮（实际 ${box.querySelectorAll('[data-nat-ivbtn]').length}）`);
+ok([...box.querySelectorAll('[data-nat-ivbtn]')].every((b) => !b.classList.contains('on')), '初始六个按钮都不高亮');
 
-// 默认：前三项（生命/物攻/魔攻）个体满 60、其余 0；性格全中性
-// —— 面板与独立页面用两套状态，互不影响
+// 初始：六项都不投个体，性格全中性 —— 面板与独立页面用两套状态，互不影响
 const wc = api.spiritCalcOf(api.STATE.bySpirit.get('152:1'));
-const wingDefSet = api.defaultInvestSet(api.STATE.bySpirit.get('152:1'));
-ok(['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].every((k) => wc.stats[k].iv === (wingDefSet.has(k) ? 60 : 0)),
-  `默认投满"种族值最高三项"：${[...wingDefSet].map((k) => k).join(',')}（实际 ${JSON.stringify(Object.fromEntries(['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].map((k) => [k, wc.stats[k].iv]))) }）`);
-ok(wingDefSet.size === 3, '默认正好选中 3 项');
-ok(Object.values(wc.stats).filter((x) => x.iv > 0).length === 3, '默认正好投了 3 项（符合游戏规则）');
-ok(Object.values(wc.stats).every((x) => x.nature === 'neutral'), '默认性格全中性');
-// 「个体」控件：投了的行要高亮（对应模拟器里那个高亮按钮）
+ok(['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].every((k) => wc.stats[k].iv === 0),
+  '初始六项个体都是 0（都不加，等用户点按钮）');
+ok(Object.values(wc.stats).every((x) => x.nature === 'neutral'), '初始性格全中性');
+// 「个体」按钮：点一下投满该项并高亮，再点取消
 {
-  const lines = [...ids.get('modalBody')._el.querySelector('#natalBlock').querySelectorAll('.nat-line.combined')];
-  const lineOf = (k) => lines.find((l) => l.querySelector(`[data-nat-iv="${k}"]`));
-  const investedKey = [...wingDefSet][0];
-  const freeKey0 = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].find((k) => !wingDefSet.has(k));
-  ok(lineOf(investedKey).querySelector('.nat-iv').classList.contains('is-on'),
-    `投了个体的行（${investedKey}）的「个体」控件高亮`);
-  ok(!lineOf(freeKey0).querySelector('.nat-iv').classList.contains('is-on'),
-    `没投的行（${freeKey0}）不高亮`);
+  const box0 = ids.get('modalBody')._el.querySelector('#natalBlock');
+  const btn = box0.querySelector('[data-nat-ivbtn="spd"]');
+  ok(!btn.classList.contains('on'), '点之前速度按钮不高亮');
+  btn.click();
+  ok(wc.stats.spd.iv === 60, `点一下速度投满 60（实际 ${wc.stats.spd.iv}）`);
+  const btn2 = ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('[data-nat-ivbtn="spd"]');
+  ok(btn2.classList.contains('on'), '点之后速度按钮高亮');
+  btn2.click();
+  ok(wc.stats.spd.iv === 0, '再点一下取消（回到 0）');
+  const btn3 = ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('[data-nat-ivbtn="spd"]');
+  ok(!btn3.classList.contains('on'), '取消后按钮不再高亮');
+  btn3.click();   // 留一个投满的状态给后面的用例
 }
 // 隔离性：先把独立页面的状态记下来，改完详情面板后它必须原样不变
 const natSnapshot = JSON.stringify(api.STATE.nat.stats);
@@ -490,49 +487,43 @@ const box2 = ids.get('modalBody')._el.querySelector('#natalBlock');
 box2.querySelector('[data-nat-btn="spd"][data-nat-kind="up"]').click();
 ok(wc.stats.spd.nature === 'neutral', '再点一次取消加成');
 
-// 填个体：输入 60 后提交，面板值要涨
-const box3 = ids.get('modalBody')._el.querySelector('#natalBlock');
-// 默认速度是 0（只投了前三项），给它投 60 应该成功
-const ivInput = box3.querySelector('[data-nat-iv="spd"]');
-ok(!!ivInput, '取到速度的个体输入框');
-const freeKey = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].find((k) => !wingDefSet.has(k));
-ok(wc.stats[freeKey].iv === 0, `默认没投的项（${freeKey}）是 0`);
+// 点「个体」按钮：投满 / 取消 / 3 项上限
 {
-  // 先把一项清掉，腾出名额
-  const hpInp = ids.get('modalBody')._el.querySelector('#natalBlock').querySelector(`[data-nat-iv="${freeKey}"]`);
-  hpInp.value = '0';
-  hpInp.dispatch('change');
-  ok(wc.stats[freeKey].iv === 0, `把 ${freeKey} 清 0 后腾出名额`);
-  const inp = ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('[data-nat-iv="spd"]');
-  inp.value = '60';
-  inp.dispatch('change');
-  ok(wc.stats.spd.iv === 60, `给速度投 60 成功（实际 ${wc.stats.spd.iv}）`);
-}
-// 输入越界要夹回 0~60
-{
-  const inp = ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('[data-nat-iv="spd"]');
-  inp.value = '999';
-  inp.dispatch('change');
-  ok(wc.stats.spd.iv === 60, `输入 999 被夹到上限 60（实际 ${wc.stats.spd.iv}）`);
-}
-// 「最多 3 项」必须保留：已经投满 3 项时，第 4 项会被拒（回到 0）
-{
-  const filled0 = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].filter((x) => wc.stats[x].iv > 0);
-  ok(filled0.length === 3, `当前正好投了 3 项（${filled0.join(',')}）`);
-  const free = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].find((x) => wc.stats[x].iv === 0);
-  const inp = ids.get('modalBody')._el.querySelector('#natalBlock').querySelector(`[data-nat-iv="${free}"]`);
-  ok(!!inp, `找到没投的那项 ${free}`);
-  inp.value = '60';
-  inp.dispatch('change');
+  // 把状态清干净，从"都不投"开始
+  ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('#dnat-reset').click();
+  ok(['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].every((k) => wc.stats[k].iv === 0), '「清空」后六项都不投');
+
+  const clickIv = (k) => ids.get('modalBody')._el.querySelector('#natalBlock')
+    .querySelector(`[data-nat-ivbtn="${k}"]`).click();
+  const btnOf = (k) => ids.get('modalBody')._el.querySelector('#natalBlock')
+    .querySelector(`[data-nat-ivbtn="${k}"]`);
+
+  clickIv('spd');
+  ok(wc.stats.spd.iv === 60, `点速度按钮 -> 投满 60（实际 ${wc.stats.spd.iv}）`);
+  ok(btnOf('spd').classList.contains('on'), '投了之后按钮高亮');
+
+  // 再点取消
+  clickIv('spd');
+  ok(wc.stats.spd.iv === 0, '再点一次取消');
+  ok(!btnOf('spd').classList.contains('on'), '取消后按钮不再高亮');
+
+  // 投满三项
+  for (const k of ['hp', 'patk', 'satk']) clickIv(k);
+  const filled = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].filter((x) => wc.stats[x].iv > 0);
+  ok(filled.length === 3, `投满 3 项（${filled.join(',')}）`);
+  // 第 4 项应被拦下（按钮置灰）
+  ok(btnOf('spd').disabled, '投满 3 项后，其余项的按钮被禁用');
+  const before4 = wc.stats.spd.iv;
+  clickIv('spd');
+  ok(wc.stats.spd.iv === before4 && wc.stats.spd.iv === 0, '第 4 项点不动，仍是 0');
   const count = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].filter((x) => wc.stats[x].iv > 0).length;
-  ok(count === 3, `投第 4 项被拦下，仍只有 3 项（实际 ${count}）`);
+  ok(count === 3, `仍只有 3 项（实际 ${count}）`);
 }
-// 清空 = 回到默认（前三项 60），不是全零
+// 清空 = 六项都不投
 {
   ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('#dnat-reset').click();
   const ivs = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].map((x) => wc.stats[x].iv);
-  const want = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].map((x) => (wingDefSet.has(x) ? 60 : 0));
-  ok(ivs.join(',') === want.join(','), `「恢复默认」回到 ${want.join(',')}（实际 ${ivs.join(',')}）`);
+  ok(ivs.join(',') === '0,0,0,0,0,0', `「清空」后六项都是 0（实际 ${ivs.join(',')}）`);
 }
 
 // 隔离性：以上所有操作都改的是"详情面板"的状态，独立页面那份必须没被动过
@@ -551,18 +542,18 @@ ok(!/base-table/.test(baseHtml), '不再有单独的基础数值表（已合并�
 const boxBase = ids.get('modalBody')._el.querySelector('#natalBlock');
 const combined = boxBase.querySelectorAll('.nat-line.combined');
 ok(combined.length === 6, `六行都是合并行（实际 ${combined.length}）`);
-// 每行都要有：基础 / 常数 / 个体 / 面板 这几段，以及性格开关与个体输入
+// 每行都要有：基础 / 常数 / 个体 / 性格开关 / 个体按钮
+// （进度条与数值在雷达图旁边那组，不在这一行里）
 let complete = 0;
 for (const line of combined) {
   const hasBase = line.innerHTML.includes('nb-k');
   const hasPlus = line.innerHTML.includes('nb-plus');
-  const hasIvInput = line.querySelectorAll('[data-nat-iv]').length === 1;
+  const hasIvBtn = line.querySelectorAll('[data-nat-ivbtn]').length === 1;
   const hasBtns = line.querySelectorAll('[data-nat-btn]').length === 2;
-  const hasVal = line.querySelectorAll('.nat-val').length === 1;
-  const hasBar = line.querySelectorAll('.bar').length === 1;
-  if (hasBase && hasPlus && hasIvInput && hasBtns && hasVal && hasBar) complete++;
+  if (hasBase && hasPlus && hasIvBtn && hasBtns) complete++;
 }
-ok(complete === 6, `六行都含 基础/常数/个体/面板/开关/条（齐全 ${complete}/6）`);
+ok(complete === 6, `六行都含 基础/常数/个体按钮/性格开关（齐全 ${complete}/6）`);
+ok((baseHtml.match(/class="bar s-/g) || []).length === 12, `进度条共 12 条（雷达图旁 6 条 + 每行各 1 条；实际 ${(baseHtml.match(/class="bar s-/g) || []).length}）`);
 
 // 逐项核对：合并行里出现的面板值必须与 statBreakdown 一致
 const wingSp = api.STATE.bySpirit.get('152:1');
