@@ -468,6 +468,55 @@ function closeModal() {
 }
 $('#modal').addEventListener('click', (e) => { if (e.target.closest('[data-close]')) closeModal(); });
 
+/* ---------------------------------------------------------- 六维雷达图
+   用固定上限缩放（和横条图一致），所以不同精灵之间可以横向比较形状；
+   若改用"该精灵自身最大值"归一化，形状会好看但失去可比性。
+   数值为 0 时给一点最小半径，否则顶点会塌到圆心看不出是哪一项。
+   ------------------------------------------------------------------ */
+function radarChart(stats) {
+  const SIZE = 240, C = SIZE / 2, R = 78;      // 半径留出标签空间
+  const n = STAT_KEYS.length;
+  const ang = (i) => (-90 + i * (360 / n)) * Math.PI / 180;   // 从正上方开始，顺时针
+  const pt = (i, r) => [C + Math.cos(ang(i)) * r, C + Math.sin(ang(i)) * r];
+  const f = (x) => x.toFixed(1);
+
+  // 网格：25% 一档，共 4 圈
+  const rings = [0.25, 0.5, 0.75, 1].map((k) => {
+    const d = Array.from({ length: n }, (_, i) => pt(i, R * k)).map(([x, y], i) => `${i ? 'L' : 'M'}${f(x)} ${f(y)}`).join(' ') + ' Z';
+    return `<path class="radar-ring" d="${d}"/>`;
+  }).join('');
+
+  // 六条轴线
+  const spokes = Array.from({ length: n }, (_, i) => {
+    const [x, y] = pt(i, R);
+    return `<line class="radar-spoke" x1="${C}" y1="${C}" x2="${f(x)}" y2="${f(y)}"/>`;
+  }).join('');
+
+  // 数据多边形：每项按自己的上限缩放
+  const points = STAT_KEYS.map(({ k }, i) => {
+    const v = Math.max(0, stats[k] ?? 0);
+    const ratio = Math.min(1, v / (STAT_MAX[k] ?? 180));
+    return pt(i, R * Math.max(0.09, ratio));
+  });
+  const poly = points.map(([x, y], i) => `${i ? 'L' : 'M'}${f(x)} ${f(y)}`).join(' ') + ' Z';
+  const dots = points.map(([x, y], i) =>
+    `<circle class="radar-dot s-${STAT_KEYS[i].k}" cx="${f(x)}" cy="${f(y)}" r="3"/>`).join('');
+
+  // 标签：短名 + 数值，位置在轴的外侧
+  const labels = STAT_KEYS.map(({ k, label }, i) => {
+    const [x, y] = pt(i, R + 20);
+    const v = stats[k] ?? 0;
+    const anchor = Math.abs(x - C) < 6 ? 'middle' : (x > C ? 'start' : 'end');
+    return `<text class="radar-label" x="${f(x)}" y="${f(y)}" text-anchor="${anchor}" dominant-baseline="middle">${label} <tspan class="radar-val">${v}</tspan></text>`;
+  }).join('');
+
+  return `<svg class="radar" viewBox="0 0 ${SIZE} ${SIZE}" role="img" aria-label="六维种族值雷达图">
+    ${rings}${spokes}
+    <path class="radar-area" d="${poly}"/>
+    ${dots}${labels}
+  </svg>`;
+}
+
 function spiritDetail(key, lvFromSkillId = null) {
   const sp = STATE.bySpirit.get(key);
   if (!sp) return toast('找不到这只精灵');
@@ -479,6 +528,11 @@ function spiritDetail(key, lvFromSkillId = null) {
       <div class="bar s-${k}"><i style="width:${pct}%"></i></div>
       <span class="v">${v}</span></div>`;
   }).join('');
+  // 雷达图 + 数值条一起给：图看形状，条看精确值
+  const statBlock = `<div class="stat-wrap">
+    ${radarChart(sp.stats)}
+    <div class="stat-bars">${statRows}</div>
+  </div>`;
 
   const skillTable = (arr, withLv) => arr.length ? `
     <div class="table-wrap"><table>
@@ -508,7 +562,7 @@ function spiritDetail(key, lvFromSkillId = null) {
           <span>技能 ${sp.skills} 个</span>
           ${sp.eggs.length ? `<span>蛋组 ${esc(sp.eggs.join('、'))}</span>` : ''}
         </div>
-        ${statRows}
+        ${statBlock}
       </div>
     </div>
 
