@@ -229,8 +229,30 @@ function natalBlock(sp, c) {
   const controls = STAT_ORDER.map((k) => {
     const st = c.stats[k];
     const b = statBreakdown(k, sp.stats[k] ?? 0, st.iv, st.nature);
-    const btn = (kind, label) => `<button class="nat-btn ${kind}${st.nature === kind ? ' on' : ''}"
-      data-nat-btn="${k}" data-nat-kind="${kind}">${label}</button>`;
+    const canEdit = st.iv > 0 || canInvestMore;
+    // 性格：一个性格 = 一项加成 + 一项削弱，三条规则：
+    //   ① 「性格+」整列最多一项  ② 「性格−」整列最多一项
+    //   ③ 同一项不能同时被加成和削弱（两个按钮互斥，各自的高亮会禁用另一个）
+    const upUsedByOther = STAT_ORDER.some((x) => x !== k && c.stats[x].nature === 'up');
+    const downUsedByOther = STAT_ORDER.some((x) => x !== k && c.stats[x].nature === 'down');
+    const btn = (kind, label) => {
+      const active = st.nature === kind;
+      // 已高亮的那一个总是可点（用来取消）；
+      // 否则：本列已被别的项占用 或 本项已被另一列占用 -> 禁用
+      const blocked = !active && (
+        (kind === 'up' ? upUsedByOther : downUsedByOther)
+        || st.nature === (kind === 'up' ? 'down' : 'up')
+      );
+      return `<button type="button" class="nat-btn ${kind}${active ? ' on' : ''}"
+        data-nat-btn="${k}" data-nat-kind="${kind}" ${blocked ? 'disabled' : ''}
+        title="${active ? `取消 ${STAT_LABEL6[k]} 的${kind === 'up' ? '加成' : '削弱'}`
+          : st.nature === (kind === 'up' ? 'down' : 'up')
+            ? `${STAT_LABEL6[k]} 已经在${kind === 'up' ? '削弱' : '加成'}了，同一项不能既加又减`
+            : (kind === 'up' ? upUsedByOther : downUsedByOther)
+              ? `${kind === 'up' ? '加成' : '削弱'}已经给了别的属性，先取消那一项`
+              : `给 ${STAT_LABEL6[k]} ${kind === 'up' ? `加成 ×${NATURE_MULT.up}` : `削弱 ×${NATURE_MULT.down}`}`}"
+        >${label}</button>`;
+    };
     const denom = STAT_MAX[k] ?? 250;
     const baseW = Math.min(100, (b.noIvPanel / denom) * 100);
     const ivW = Math.min(100 - baseW, (Math.max(0, b.ivGain) / denom) * 100);
@@ -1912,13 +1934,25 @@ function bindNatalBlock() {
   if (!sp) return;
   const c = spiritCalcOf(sp);
 
-  // 性格开关（每项独立，再点一次取消）
+  // 性格开关：每项独立，但「性格+」整列最多一项、「性格−」整列最多一项
+  // （一个性格 = 一项加成 + 一项削弱）。再点自己 = 取消。
   for (const btn of box.querySelectorAll('[data-nat-btn]')) {
     btn.addEventListener('click', () => {
       const k = btn.dataset.natBtn;
       const kind = btn.dataset.natKind;
       const st = c.stats[k];
-      st.nature = st.nature === kind ? 'neutral' : kind;
+      if (st.nature === kind) {                      // 取消
+        st.nature = 'neutral';
+      } else {
+        const taken = STAT_ORDER.some((x) => x !== k && c.stats[x].nature === kind);
+        if (taken) {
+          toast(kind === 'up' ? '加成已经给了别的属性，请先取消那一项' : '削弱已经给了别的属性，请先取消那一项');
+          return;
+        }
+        // 同一项不能既加成又削弱
+        if (st.nature === (kind === 'up' ? 'down' : 'up')) st.nature = 'neutral';
+        st.nature = kind;
+      }
       redrawNatalBlock(key);
     });
   }

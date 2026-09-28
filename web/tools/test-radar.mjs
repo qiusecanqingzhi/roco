@@ -572,6 +572,71 @@ ok(b1.panel === api.panelInt('spd', wingSp.stats.spd, 60, 'up'), 'statBreakdown 
 const bh = api.statBreakdown('hp', 78, 0, 'neutral');
 ok(bh.flat === 70 && bh.const === 100, `生命常数是 70 / 100（实际 ${bh.flat} / ${bh.const}）`);
 
+/* ---------------------------------------------------------- 性格单项规则 */
+// 一个性格 = 一项加成 + 一项削弱：「性格+」整列最多一项，「性格−」整列最多一项；
+// 同一项不能既加成又削弱。点已选的那项 = 取消。
+console.log('\n· 性格单项规则（+整列一项、−整列一项）');
+{
+  ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('#dnat-reset').click();
+  const nb = () => ids.get('modalBody')._el.querySelector('#natalBlock');
+  const upBtn = (k) => nb().querySelector(`[data-nat-btn="${k}"][data-nat-kind="up"]`);
+  const downBtn = (k) => nb().querySelector(`[data-nat-btn="${k}"][data-nat-kind="down"]`);
+  const natOf = (k) => wc.stats[k].nature;
+
+  ok(['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].every((k) => natOf(k) === 'neutral'), '初始六项性格都是中性');
+
+  upBtn('spd').click();
+  ok(natOf('spd') === 'up', '给速度选「性格+」');
+  ok(upBtn('spd').classList.contains('on'), '速度的「性格+」按钮高亮');
+  ok(upBtn('patk').disabled, '别的行的「性格+」被禁用（整列只能一项）');
+
+  // 直接点被禁用的按钮不应生效
+  const beforeNat = JSON.stringify(['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].map(natOf));
+  upBtn('patk').click();
+  ok(JSON.stringify(['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].map(natOf)) === beforeNat, '再点别的「性格+」无效');
+
+  // 「性格−」是另一列，可以单独选一项
+  downBtn('patk').click();
+  ok(natOf('patk') === 'down', '给物攻选「性格−」（另一列不受影响）');
+  ok(upBtn('spd').classList.contains('on'), '速度的加成仍在');
+  ok(downBtn('satk').disabled, '别的行的「性格−」被禁用');
+
+  // 同一项的两个按钮互斥：速度已是「性格+」时，它的「性格−」应被禁用
+  ok(downBtn('spd').disabled, '速度已是「性格+」，它的「性格−」被禁用（同一项不能既加又减）');
+  ok(!upBtn('spd').disabled, '已高亮的那个按钮仍可点（用来取消）');
+  const natBefore = natOf('spd');
+  downBtn('spd').click();
+  ok(natOf('spd') === natBefore, '点被禁用的「性格−」无效');
+
+  // 取消加成就把「+」列腾出来了，也解除了本项的互斥
+  upBtn('spd').click();
+  ok(natOf('spd') === 'neutral', '再点「性格+」取消加成');
+  // 「−」列此时被物攻占着，所以速度的「性格−」仍应禁用
+  ok(downBtn('spd').disabled, '「−」列被物攻占用，速度的「性格−」仍禁用');
+  ok(!upBtn('hp').disabled, '取消后「性格+」整列空出来，别的行可用');
+
+  // 腾出「−」列后再让速度选削弱（能选上）
+  downBtn('patk').click();
+  ok(natOf('patk') === 'neutral', '取消物攻的削弱');
+  downBtn('spd').click();
+  ok(natOf('spd') === 'down', '速度改成削弱');
+  ok(upBtn('spd').disabled, '此时速度的「性格+」被禁用（互斥的另一半）');
+
+  // 再点自己 = 取消
+  downBtn('spd').click();
+  ok(natOf('spd') === 'neutral', '再点一次取消削弱');
+
+  // 保证「+」「−」各至多一项
+  upBtn('hp').click(); upBtn('satk').click();      // 第二次应无效
+  downBtn('pdef').click(); downBtn('sdef').click(); // 第二次应无效
+  const ups = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].filter((k) => natOf(k) === 'up');
+  const downs = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].filter((k) => natOf(k) === 'down');
+  ok(ups.length <= 1, `「性格+」至多一项（实际 ${ups.join(',') || '无'}）`);
+  ok(downs.length <= 1, `「性格−」至多一项（实际 ${downs.join(',') || '无'}）`);
+  // 收尾：清干净，后面的用例从干净状态开始
+  ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('#dnat-reset').click();
+}
+
 /* ---------------------------------------------------------- 传说技能 */
 // source_type=legendary 只有 7 只精灵有，早先模板没渲染这一桶、被静默丢弃。
 console.log('\n· 传说技能');
