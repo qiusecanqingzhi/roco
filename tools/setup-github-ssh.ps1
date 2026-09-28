@@ -86,11 +86,18 @@ if (Test-Path $cfgPath) {
 try { & icacls $keyPath /inheritance:r /grant:r "$($env:USERNAME):(R)" 2>&1 | Out-Null } catch { Warn '设置密钥权限失败（一般不影响）' }
 
 # ---------------------------------------------------------------- 3) 测试
+# 注意：ssh.exe 会把 "Permanently added ... to the list of known hosts" 写到 stderr，
+# 而 $ErrorActionPreference='Stop' 会把原生命令的 stderr 当成终止性错误，
+# 直接把脚本打断（曾经真的踩过）。所以这里单独把偏好设回去，并吞掉非零退出码。
 Info '测试 ssh.github.com:443 连通性…'
-& $ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -T git@github.com 2>&1 | ForEach-Object {
-  # 首次连接会打印 "Hi <user>! You've successfully authenticated..." 或权限拒绝
-  Write-Host "  $_"
+$ErrorActionPreference = 'Continue'
+try {
+  & $ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -T git@github.com 2>&1 |
+    ForEach-Object { Write-Host "  $_" }
+} catch {
+  Warn "连接测试出错（不影响后续）：$($_.Exception.Message)"
 }
+$ErrorActionPreference = 'Stop'
 
 Write-Host ''
 Write-Host '════════════════════════════════════════════════════════════' -ForegroundColor Yellow
