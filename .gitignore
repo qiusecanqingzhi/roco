@@ -29,3 +29,5 @@ Thumbs.db
 # 提交信息临时文件
 .commitmsg
 .commit-msg.txt
+
+.cmsg

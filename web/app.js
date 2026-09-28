@@ -568,9 +568,48 @@ function radarChart(stats) {
   </svg>`;
 }
 
+/**
+ * 血脉技能区块：每只精灵可选 18 种血脉，每种血脉给 1 个专属技能。
+ * 数据不在 spirit_skill 里（那里的 source_type 只有 level/machine/passive/legendary），
+ * 而是来自 spirit_bloodlines（源数据是详情 JSON 的 bloodline_options）。
+ * 默认只显示前 6 种，其余点「展开」看 —— 18 行会让弹窗太长。
+ */
+const BLOODLINE_PREVIEW = 6;
+
+function bloodlineSection(sp) {
+  const list = STATE.data.spiritBloodlines?.[`${sp.id}:${sp.formId}`] ?? [];
+  if (!list.length) return '';
+  const expanded = !!STATE.expandedBloodlines;
+  const shown = expanded ? list : list.slice(0, BLOODLINE_PREVIEW);
+  const rows = shown.map((b) => `
+    <tr>
+      <td class="mid">${b.icon ? `<span class="bl-icon">${imgTag(b.icon, null, b.name)}</span>` : ''}</td>
+      <td>${esc(b.name)}</td>
+      <td class="skill-name">${b.skillId ? `<span class="clickable-inline" data-skill="${b.skillId}">${esc(b.skill)}</span>` : '<span class="desc">—</span>'}</td>
+      <td class="num">${b.lv ?? '—'}</td>
+      <td class="mid">${b.skillId ? badge(STATE.bySkill.get(b.skillId)?.typeId) : ''}</td>
+      <td class="mid">${b.itemIcon ? `<span class="bl-item" title="${esc(b.item ?? '')}">${imgTag(b.itemIcon, null, b.item ?? '')}</span>` : esc(b.item ?? '')}</td>
+    </tr>`).join('');
+
+  const withSkill = list.filter((b) => b.skillId).length;
+  return `<div class="section">
+    <h3>血脉技能 <span class="n">${list.length} 种血脉${withSkill ? `，其中 ${withSkill} 种各给 1 个专属技能` : ''}</span>
+      ${list.length > BLOODLINE_PREVIEW ? `<button class="link-btn" id="toggleBloodline">${expanded ? '收起' : `展开全部 ${list.length} 种`}</button>` : ''}
+    </h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th class="mid">血脉</th><th>名称</th><th>给予技能</th><th class="num">解锁</th><th class="mid">系别</th><th class="mid">秘药</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <div class="desc" style="margin-top:6px;font-size:12px">
+      血脉会替换技能栏中的一个技能为对应血脉技能；显示的是每只精灵各自的专属搭配（不同精灵同一种血脉给的技能可能不同）。
+    </div>
+  </div>`;
+}
+
 function spiritDetail(key, lvFromSkillId = null) {
   const sp = STATE.bySpirit.get(key);
   if (!sp) return toast('找不到这只精灵');
+  STATE.currentSpirit = key;          // 供「展开血脉」重画时定位当前精灵
   const skills = spiritSkillsOf(sp);
   const statRows = STAT_KEYS.map(({ stat, label }) => {
     const v = sp.stats[stat] ?? 0;
@@ -625,6 +664,8 @@ function spiritDetail(key, lvFromSkillId = null) {
       </div></div>` : ''}
 
     ${evo ? `<div class="section"><h3>进化链</h3><div class="evo">${evo}</div></div>` : ''}
+
+    ${bloodlineSection(sp)}
 
     <div class="section"><h3>升级学会 <span class="n">${skills.level.length}</span></h3>${skillTable(skills.level, true)}</div>
     ${skills.machine.length ? `<div class="section"><h3>技能石 <span class="n">${skills.machine.length}</span></h3>${skillTable(skills.machine, false)}</div>` : ''}
@@ -924,6 +965,16 @@ document.addEventListener('click', (e) => {
 $('#modalBody').addEventListener('click', (e) => {
   const termEl = e.target.closest('[data-glossary]');
   if (termEl) return glossaryDetail(termEl.dataset.glossary);
+  if (e.target.closest('#toggleBloodline')) {
+    STATE.expandedBloodlines = !STATE.expandedBloodlines;
+    // 重画当前精灵详情，保留滚动位置
+    const panel = $('.modal-panel');
+    const top = panel.scrollTop;
+    const cur = STATE.currentSpirit;
+    if (cur) spiritDetail(cur);
+    panel.scrollTop = top;
+    return;
+  }
   const skillEl = e.target.closest('[data-skill]');
   if (skillEl) {
     const owner = e.target.closest('.modal-body')?.dataset.owner;

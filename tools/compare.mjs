@@ -28,6 +28,7 @@ const KEYS = {
   glossary: ['note_id'],
   stat_icons: ['stat'],
   passive_skill: ['handbook_id', 'form_id'],
+  spirit_bloodline: ['handbook_id', 'form_id', 'bloodline_id'],
 };
 
 const A = new DatabaseSync(A_PATH);

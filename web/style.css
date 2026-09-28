@@ -181,6 +181,17 @@ button { font: inherit; color: inherit; }
 /* 技能图标 / 精灵头像 */
 .skill-icon { width: 34px; height: 34px; object-fit: contain; border-radius: 7px; }
 .spirit-head { width: 30px; height: 30px; object-fit: contain; }
+
+/* 血脉：花形徽章 + 秘药小图标 */
+.bl-icon img { width: 34px; height: 34px; object-fit: contain; }
+.bl-item img { width: 26px; height: 26px; object-fit: contain; border-radius: 6px; }
+.clickable-inline { color: var(--accent); cursor: pointer; }
+.clickable-inline:hover { text-decoration: underline; }
+.link-btn {
+  margin-left: auto; background: none; border: none; padding: 0;
+  color: var(--accent); cursor: pointer; font-size: 12px;
+}
+.link-btn:hover { text-decoration: underline; }
 .pill {
   display: inline-block; padding: 1px 8px; border-radius: 999px;
   background: var(--card-hi); color: var(--text-dim); font-size: 11px;

@@ -154,6 +154,56 @@ const typesHtml = ids.get('app').innerHTML;
 ok(/class="type-icon"/.test(typesHtml), '系别克制页的表头用图标徽章');
 ok((typesHtml.match(/<td class="mx/g) || []).length === 324, '克制矩阵仍是 324 格');
 
+/* ---------------------------------------------------------- 血脉技能 */
+console.log('\n· 血脉技能');
+api.STATE.expandedBloodlines = false;
+api.spiritDetail('466:1');
+const blHtml = ids.get('modalBody').innerHTML;
+const bl = api.STATE.data.spiritBloodlines['466:1'] ?? [];
+ok(bl.length === 18, `果实立方人有 18 种血脉（实际 ${bl.length}）`);
+ok(/血脉技能/.test(blHtml), '详情里有「血脉技能」区块');
+ok(/展开全部 18 种/.test(blHtml), '默认折叠，提供「展开全部」按钮');
+ok((blHtml.match(/class="bl-icon"/g) || []).length === 6, `默认显示 6 行（实际 ${(blHtml.match(/class="bl-icon"/g) || []).length}）`);
+ok((blHtml.match(/class="bl-item"/g) || []).length === 6, '每行显示秘药图标');
+ok(/徒长/.test(blHtml) && /引燃/.test(blHtml), '给出了血脉技能名（徒长/引燃）');
+ok(/data-skill="7020880"/.test(blHtml), '血脉技能可点开技能详情');
+ok(bl[0].skill === '拍击' && bl[0].lv === 15, `首条血脉：${bl[0].name} -> ${bl[0].skill} Lv${bl[0].lv}`);
+ok(bl.every((x) => x.icon && x.skillId && x.skill), '18 条血脉都有图标与技能');
+
+// 展开状态
+api.STATE.expandedBloodlines = true;
+api.spiritDetail('466:1');
+const blFull = ids.get('modalBody').innerHTML;
+ok((blFull.match(/class="bl-icon"/g) || []).length === 18, `展开后 18 行（实际 ${(blFull.match(/class="bl-icon"/g) || []).length}）`);
+ok(/收起/.test(blFull), '展开后按钮变成「收起」');
+api.STATE.expandedBloodlines = false;
+
+// 不同精灵的同一种血脉给的技能不同（源数据特性，界面上必须显示各自的值）
+const blOther = api.STATE.data.spiritBloodlines['1:1'] ?? [];
+ok(blOther.length >= 18, `#1 也有全部血脉（实际 ${blOther.length} 行）`);
+ok(blOther[0].skill !== bl[0].skill, `同一种血脉不同精灵给的技能不同：#466=${bl[0].skill} / #1=${blOther[0].skill}`);
+
+// 有的精灵多一条「首领血脉」且不给技能，界面必须能显示而不报错
+const boss = blOther.find((x) => !x.skillId);
+ok(!!boss, `存在不给技能的血脉：${boss?.name ?? '(没找到)'}`);
+api.STATE.expandedBloodlines = true;   // 它在第 19 位，默认折叠时看不到
+api.spiritDetail('1:1');
+const bossHtml = ids.get('modalBody').innerHTML;
+ok(/首领血脉/.test(bossHtml), '展开后首领血脉出现在详情里');
+ok(/class="desc">—</.test(bossHtml), '不给技能的血脉显示为「—」而不是空白');
+ok(!/undefined|NaN/.test(bossHtml), '不给技能的血脉没有渲染出 undefined/NaN');
+api.STATE.expandedBloodlines = false;
+
+// 全库抽查：任何精灵的血脉区块都不应出现 undefined
+let bad = 0;
+for (const key of Object.keys(api.STATE.data.spiritBloodlines).slice(0, 40)) {
+  api.STATE.expandedBloodlines = true;
+  api.spiritDetail(key);
+  if (/undefined|NaN/.test(ids.get('modalBody').innerHTML)) bad++;
+}
+ok(bad === 0, `抽查 40 只精灵的血脉区块，无 undefined/NaN（实际 ${bad}）`);
+api.STATE.expandedBloodlines = false;
+
 console.log('');
 if (problems.length) {
   console.log(`✗ ${problems.length} 项不通过:`);

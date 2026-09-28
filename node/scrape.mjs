@@ -456,6 +456,7 @@ async function main() {
   let glossaryList = [];
   let statIcons = [];
   let passiveSkillRows = [];
+  let bloodlineRows = [];
   const typeById = makeTypeIndex({ types: await fetcher.getJson(`${S}/types.json`) });
   typesData = await fetcher.getJson(`${S}/types.json`);
 
@@ -524,10 +525,33 @@ async function main() {
       })),
     );
 
+    // 血脉：每只精灵 18 种血脉，每种带 1 个专属技能
+    bloodlineRows = allDetails.flatMap((d) =>
+      (d.bloodline_options ?? []).map((b) => {
+        const bl = b.bloodline ?? {};
+        const sk = (b.skills ?? [])[0];
+        return {
+          handbook_id: d.handbook_id,
+          form_id: d.form_id,
+          bloodline_id: b.bloodline_id ?? bl.bloodline_id,
+          bloodline_name: bl.name ?? '',
+          bloodline_short: bl.short_name ?? '',
+          bloodline_icon: bl.image_url ? ORIGIN + bl.image_url : '',
+          grant_item: bl.grant_item?.name ?? '',
+          grant_item_icon: bl.grant_item?.image_url ? ORIGIN + bl.grant_item.image_url : '',
+          skill_id: sk?.id ?? null,
+          skill_name: sk?.name ?? '',
+          unlock_level: sk?.unlock_level ?? null,
+          skill_icon: sk?.image_url ? ORIGIN + sk.image_url : '',
+        };
+      }),
+    );
+
     writeTable(outDir, 'spirits', spiritsRows);
     writeTable(outDir, 'spirit_skills', spiritSkillLinks);
     if (statIcons.length) writeTable(outDir, 'stat_icons', statIcons);
     if (passiveSkillRows.length) writeTable(outDir, 'passive_skills', passiveSkillRows);
+    if (bloodlineRows.length) writeTable(outDir, 'spirit_bloodlines', bloodlineRows);
     result.parts.spirits = { count: spiritsRows.length, with_detail: spiritsDetail.length };
   }
 
@@ -685,6 +709,7 @@ async function main() {
         glossaryList,
         statIcons,
         passiveSkillRows,
+        bloodlineRows,
       });
       process.stderr.write('· 已写入 out/roco.sqlite\n');
     } catch (e) {
@@ -764,11 +789,23 @@ const CREATE_SQL = {
   passive_skill: `CREATE TABLE IF NOT EXISTS passive_skill (
       locale TEXT, handbook_id INT, form_id INT, skill_id INT, name TEXT, desc TEXT, image_url TEXT,
       PRIMARY KEY (locale, handbook_id, form_id))`,
+  // 血脉：每只精灵可选 18 种血脉，每种血脉给 1 个专属技能。
+  // 这些技能不在 spirit_skill 里（那里的 source_type 只有 level/machine/passive/legendary），
+  // 只在详情 JSON 的 bloodline_options 里，所以单独建表。
+  spirit_bloodline: `CREATE TABLE IF NOT EXISTS spirit_bloodline (
+      locale TEXT, handbook_id INT, form_id INT,
+      bloodline_id INT, bloodline_name TEXT, bloodline_short TEXT, bloodline_icon TEXT,
+      grant_item TEXT, grant_item_icon TEXT,
+      skill_id INT, skill_name TEXT, unlock_level INT, skill_icon TEXT,
+      PRIMARY KEY (locale, handbook_id, form_id, bloodline_id))`,
 };
 const COLUMN_TYPE = {
   type_count: 'INT', types: 'TEXT', seat: 'INT', skills: 'TEXT', note_id: 'INT',
   used_by_skill_count: 'INT', used_by_skills: 'TEXT', icon_key: 'TEXT',
   source_order: 'INT', display_order: 'INT', image_url: 'TEXT',
+  bloodline_id: 'INT', bloodline_name: 'TEXT', bloodline_short: 'TEXT', bloodline_icon: 'TEXT',
+  grant_item: 'TEXT', grant_item_icon: 'TEXT', skill_name: 'TEXT', skill_icon: 'TEXT',
+  unlock_level: 'INT',
 };
 /** 各表期望的主键，用于检测需要重建的旧结构 */
 const PK = {
@@ -781,6 +818,7 @@ const PK = {
   glossary: ['locale', 'note_id'],
   stat_icons: ['locale', 'stat'],
   passive_skill: ['locale', 'handbook_id', 'form_id'],
+  spirit_bloodline: ['locale', 'handbook_id', 'form_id', 'bloodline_id'],
   type: ['locale', 'id'],
   type_matchup: ['locale', 'attacking_type_id', 'defending_type_id'],
 };
@@ -832,6 +870,11 @@ async function buildSqlite(file, locale, data) {
       'locale', 'note_id', 'note', 'description', 'used_by_skill_count', 'used_by_skills', 'icon_key',
     ],
     stat_icons: ['locale', 'stat', 'label', 'display_order', 'image_url'],
+    spirit_bloodline: [
+      'locale', 'handbook_id', 'form_id', 'bloodline_id', 'bloodline_name', 'bloodline_short',
+      'bloodline_icon', 'grant_item', 'grant_item_icon',
+      'skill_id', 'skill_name', 'unlock_level', 'skill_icon',
+    ],
   };
 
   // 表结构漂移处理：CREATE TABLE IF NOT EXISTS 不会改已存在的表，
@@ -843,6 +886,7 @@ async function buildSqlite(file, locale, data) {
     glossary: tables.glossary,
     stat_icons: tables.stat_icons,
     passive_skill: tables.passive_skill,
+    spirit_bloodline: tables.spirit_bloodline,
     type: ['locale', 'id', 'name', 'short_name', 'color', 'status_immunities'],
     type_matchup: ['locale', 'attacking_type_id', 'defending_type_id', 'effect'],
   };
@@ -911,7 +955,11 @@ async function buildSqlite(file, locale, data) {
     );
   }
 
-  // 队伍 / 术语 / 六维图标 / 被动技能
+  // 队伍 / 术语 / 六维图标 / 被动技能 / 血脉
+  if (data.bloodlineRows?.length) {
+    const stB = replaceLocale('spirit_bloodline', tables.spirit_bloodline);
+    for (const r of data.bloodlineRows) stB.run(...tables.spirit_bloodline.map((c) => (c === 'locale' ? locale : r[c] ?? null)));
+  }
   if (data.passiveSkillRows?.length) {
     const stP = replaceLocale('passive_skill', tables.passive_skill);
     for (const r of data.passiveSkillRows) stP.run(...tables.passive_skill.map((c) => (c === 'locale' ? locale : r[c] ?? null)));

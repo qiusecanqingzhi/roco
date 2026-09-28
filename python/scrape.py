@@ -421,6 +421,12 @@ def build_sqlite(path: Path, locale: str, data: dict):
     CREATE TABLE IF NOT EXISTS passive_skill(
       locale TEXT, handbook_id INT, form_id INT, skill_id INT, name TEXT, desc TEXT, image_url TEXT,
       PRIMARY KEY(locale, handbook_id, form_id));
+    CREATE TABLE IF NOT EXISTS spirit_bloodline(
+      locale TEXT, handbook_id INT, form_id INT,
+      bloodline_id INT, bloodline_name TEXT, bloodline_short TEXT, bloodline_icon TEXT,
+      grant_item TEXT, grant_item_icon TEXT,
+      skill_id INT, skill_name TEXT, unlock_level INT, skill_icon TEXT,
+      PRIMARY KEY(locale, handbook_id, form_id, bloodline_id));
     CREATE INDEX IF NOT EXISTS idx_ss ON spirit_skill(locale, handbook_id);
     CREATE INDEX IF NOT EXISTS idx_sl ON skill_learner(locale, skill_id);
     CREATE INDEX IF NOT EXISTS idx_tm ON team_member(locale, team_id);
@@ -447,6 +453,9 @@ def build_sqlite(path: Path, locale: str, data: dict):
                         "types", "variant", "bloodline", "item"],
         "glossary": ["note_id", "note", "description", "used_by_skill_count", "used_by_skills", "icon_key"],
         "stat_icons": ["stat", "label", "display_order", "image_url"],
+        "spirit_bloodline": ["handbook_id", "form_id", "bloodline_id", "bloodline_name", "bloodline_short",
+                             "bloodline_icon", "grant_item", "grant_item_icon",
+                             "skill_id", "skill_name", "unlock_level", "skill_icon"],
         "type": ["id", "name", "short_name", "color", "status_immunities"],
         "type_matchup": ["attacking_type_id", "defending_type_id", "effect"],
     }
@@ -461,6 +470,7 @@ def build_sqlite(path: Path, locale: str, data: dict):
         "team": ["locale", "id"],
         "glossary": ["locale", "note_id"],
         "stat_icons": ["locale", "stat"],
+        "spirit_bloodline": ["locale", "handbook_id", "form_id", "bloodline_id"],
         "type": ["locale", "id"],
         "type_matchup": ["locale", "attacking_type_id", "defending_type_id"],
     }
@@ -558,6 +568,13 @@ def build_sqlite(path: Path, locale: str, data: dict):
     ins("stat_icons", si_cols, data.get("stat_icons", []))
     ps_cols = ["handbook_id", "form_id", "skill_id", "name", "desc", "image_url"]
     ins("passive_skill", ps_cols, data.get("passive_skills", []))
+    sb_cols = ["handbook_id", "form_id", "bloodline_id", "bloodline_name", "bloodline_short",
+               "bloodline_icon", "grant_item", "grant_item_icon",
+               "skill_id", "skill_name", "unlock_level", "skill_icon"]
+    # 首领血脉不给技能，skill_id/unlock_level 是 None —— 必须存成 NULL 而不是空串，
+    # 否则与 Node 版的 null 对不上（踩过：120 处字段差异）
+    ins("spirit_bloodline", sb_cols, data.get("spirit_bloodlines", []),
+        transform={"skill_id": blank_to_null, "unlock_level": blank_to_null})
 
     db.commit()
     db.close()
@@ -618,7 +635,8 @@ def main(argv=None):
     by_id = index_types(types_payload)
 
     data = {"spirits": [], "skills": [], "spirit_skills": [], "skill_learners": [], "types": [], "matchups": [],
-            "teams": [], "team_members": [], "glossary": [], "stat_icons": [], "passive_skills": []}
+            "teams": [], "team_members": [], "glossary": [], "stat_icons": [], "passive_skills": [],
+            "spirit_bloodlines": []}
     summary = {"locale": locale, "catalog_version": ver, "parts": {}}
 
     # ---- 精灵 --------------------------------------------------------
@@ -681,6 +699,25 @@ def main(argv=None):
         } for d in details for p in (d.get("passive_skills") or [])]
         if data["passive_skills"]:
             write_table(out_dir, "passive_skills", data["passive_skills"])
+        # 血脉：每只精灵 18 种血脉，每种带 1 个专属技能（有的精灵多一条"首领血脉"且不给技能）
+        data["spirit_bloodlines"] = [{
+            "handbook_id": d.get("handbook_id"),
+            "form_id": d.get("form_id"),
+            "bloodline_id": b.get("bloodline_id") or (b.get("bloodline") or {}).get("bloodline_id"),
+            "bloodline_name": (b.get("bloodline") or {}).get("name") or "",
+            "bloodline_short": (b.get("bloodline") or {}).get("short_name") or "",
+            "bloodline_icon": ORIGIN + (b.get("bloodline") or {}).get("image_url") if (b.get("bloodline") or {}).get("image_url") else "",
+            "grant_item": ((b.get("bloodline") or {}).get("grant_item") or {}).get("name") or "",
+            "grant_item_icon": ORIGIN + ((b.get("bloodline") or {}).get("grant_item") or {}).get("image_url")
+                               if ((b.get("bloodline") or {}).get("grant_item") or {}).get("image_url") else "",
+            "skill_id": (b.get("skills") or [{}])[0].get("id") if (b.get("skills") or []) else None,
+            "skill_name": (b.get("skills") or [{}])[0].get("name") or "" if (b.get("skills") or []) else "",
+            "unlock_level": (b.get("skills") or [{}])[0].get("unlock_level") if (b.get("skills") or []) else None,
+            "skill_icon": ORIGIN + (b.get("skills") or [{}])[0]["image_url"]
+                          if (b.get("skills") or []) and (b.get("skills") or [{}])[0].get("image_url") else "",
+        } for d in details for b in (d.get("bloodline_options") or [])]
+        if data["spirit_bloodlines"]:
+            write_table(out_dir, "spirit_bloodlines", data["spirit_bloodlines"])
         summary["parts"]["spirits"] = {"count": len(data["spirits"]), "with_detail": len(details)}
 
     # ---- 技能 --------------------------------------------------------

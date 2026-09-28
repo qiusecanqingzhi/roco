@@ -174,6 +174,31 @@ for (const s of rows('SELECT id, image_url FROM skill WHERE locale = ? ORDER BY 
   if (s.image_url) skillIcons.push([s.id, assetName(s.image_url)]);
 }
 
+/* ---------------------------------------------------------------- 血脉
+   每只精灵 18 种血脉，每种给 1 个专属技能。这些技能不在 spirit_skill 里，
+   只在详情 JSON 的 bloodline_options 中，单独存在 spirit_bloodline 表。
+   这里按 "handbook:form" 归组，并把图标转成本地路径。 */
+const bloodlineRows = rows('SELECT * FROM spirit_bloodline WHERE locale = ? ORDER BY handbook_id, form_id, bloodline_id', L);
+const spiritBloodlines = new Map();
+const bloodlineIconUrls = [];        // 原站 URL，给图片清单用
+for (const r of bloodlineRows) {
+  const key = `${r.handbook_id}:${r.form_id}`;
+  if (!spiritBloodlines.has(key)) spiritBloodlines.set(key, []);
+  spiritBloodlines.get(key).push({
+    id: r.bloodline_id,
+    name: r.bloodline_name,
+    short: r.bloodline_short || null,
+    icon: assetName(r.bloodline_icon),
+    item: r.grant_item || null,
+    itemIcon: assetName(r.grant_item_icon),
+    skillId: r.skill_id,
+    skill: r.skill_name || null,
+    lv: r.unlock_level,
+    skillIcon: assetName(r.skill_icon),
+  });
+  for (const u of [r.bloodline_icon, r.grant_item_icon, r.skill_icon]) if (u) bloodlineIconUrls.push(u);
+}
+
 /* ---------------------------------------------------------------- 技能 */
 const skillRows = rows('SELECT * FROM skill WHERE locale = ? ORDER BY id', L);
 const learnerRows = rows('SELECT * FROM skill_learner WHERE locale = ?', L);
@@ -278,11 +303,14 @@ writeJson(path.join(cfg.out, 'teams.json'), teams);
 writeJson(path.join(cfg.out, 'glossary.json'), glossary);
 writeJson(path.join(cfg.out, 'spirit-skills.json'), spiritSkillMap);
 writeJson(path.join(cfg.out, 'skill-learners.json'), learnerMap);
+const bloodlineMap = {};
+for (const [k, v] of spiritBloodlines) bloodlineMap[k] = v;
+writeJson(path.join(cfg.out, 'spirit-bloodlines.json'), bloodlineMap);
 
 // 单文件包：给 file:// 直接双击打开用（浏览器不允许 file:// 下 fetch 本地 JSON）
 const bundle = {
   meta, spirits, skills, matchups, teams, glossary,
-  spiritSkills: spiritSkillMap, skillLearners: learnerMap,
+  spiritSkills: spiritSkillMap, skillLearners: learnerMap, spiritBloodlines: bloodlineMap,
 };
 const bundlePath = path.join(cfg.assetsDir, 'data-bundle.js');
 fs.mkdirSync(path.dirname(bundlePath), { recursive: true });
@@ -297,6 +325,7 @@ for (const s of skills) addUrl(s.imgOnline);
 for (const t of types) addUrl(t.iconOnline);
 for (const x of statIcons) addUrl(x.iconOnline);
 for (const u of passiveIconUrls) addUrl(u);
+for (const u of bloodlineIconUrls) addUrl(u);
 writeJson(path.join(cfg.out, 'assets.json'), [...urls].sort());
 
 console.log(`\n✓ 完成（${((Date.now() - t0) / 1000).toFixed(1)}s）`);
