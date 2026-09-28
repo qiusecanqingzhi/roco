@@ -74,10 +74,6 @@ const STATE = {
   skillIconById: new Map(),
   typeByName: new Map(),
   effect: new Map(),
-  // 天分/资质/性格：六维各自独立开关性格，最多 3 项可投入个体
-  // 这里留 null，等 index() 时用 defaultNat() 建 —— 它依赖的 STAT_ORDER 在文件
-  // 后面才定义，在这里直接调用会踩 TDZ（const 不提升）。
-  nat: null,
   // 默认用「岚鸟 用 扇风 打 奇丽花」—— 与官方说明页的算例一致，打开就能对照
   calc: {
     a: '20:1', b: '43:1',
@@ -123,25 +119,21 @@ function index(data) {
   // （matchups 是 [attacking_type_id, defending_type_id, effect] 三元组）
   STATE.typeByName = new Map(data.meta.types.map((t) => [t.name, t]));
   STATE.effect = new Map((data.matchups ?? []).map(([a, d, e]) => [`${a}:${d}`, e]));
-  // 性格/天分计算器的初始状态放在这里建：它依赖 STAT_ORDER 等文件后部定义的常量
-  STATE.nat ??= defaultNat('152:1');
 }
 
 /* ============================================================
    详情页里的加点面板
    ------------------------------------------------------------
-   详情弹窗用【按精灵分开存储】的配置（STATE.spiritCalc），
-   不复用 STATE.nat —— 否则弹窗里改加点会串到「性格 · 天分」页面上。
+   每个精灵的加点配置存在 STATE.spiritCalc（Map，按 "id:form" 分开）。
    雷达图与数值条都按当前配置实时重算，改一下就能看到形状变化。
    ============================================================ */
 /**
- * 详情弹窗用【按精灵分开存储】的配置（STATE.spiritCalc），
- * 不复用 STATE.nat —— 否则弹窗里改加点会串到「性格 · 天分」页面上。
- * 详情页的个体上限固定 60（不区分天分/星级）：面板值已经把基础数值含进去了，
- * 再选星级会让人以为"星级影响面板"，所以只保留个体投入与性格开关。
+ * 每只精灵独立的加点配置。
+ * 个体上限固定 60：面板值已经把基础数值含进去了，再选天分/星级会让人
+ * 误以为"星级影响面板"，所以只保留个体投入与性格开关。
  * 个体【初始都不加，点按钮一项一项地投】：每行有一个「个体」按钮，
- * 点一下把该项投满 60 并高亮，再点取消 —— 和游戏里那个亮/暗的按钮一致，
- * 不用手输数字。最多 3 项是游戏规则，工具要挡住，否则会算出游戏里不存在的面板。
+ * 点一下把该项投满 60 并高亮，再点取消 —— 和游戏里那个亮/暗的按钮一致。
+ * 最多 3 项是游戏规则，工具要挡住，否则会算出游戏里不存在的面板。
  */
 function spiritCalcOf(sp) {
   const key = `${sp.id}:${sp.formId}`;
@@ -196,6 +188,14 @@ function defaultInvestSet(sp) {
     })
     .sort((a, b) => b.weight - a.weight);
   return new Set(ranked.slice(0, 3).map((x) => x.k));
+}
+
+/** 六维图标（复用 stat_icons，当 CSS mask 用）—— 详情面板每行都要用 */
+function stateIcon(k) {
+  const icon = STATE.statIconByStat.get(ICON_KEY[k] ?? k);
+  if (!icon) return '';
+  const url = esc(icon.icon || icon.iconOnline);
+  return `<span class="natal-ic" style="-webkit-mask-image:url('${url}');mask-image:url('${url}')"></span>`;
 }
 
 /** 雷达图 + 数值条 + 加点控件（整体可重画）*/
@@ -436,7 +436,7 @@ function learnersOf(skillId) {
 /* ============================================================
    路由
    ============================================================ */
-const VIEWS = ['spirits', 'skills', 'types', 'calc', 'nature', 'glossary'];
+const VIEWS = ['spirits', 'skills', 'types', 'calc', 'glossary'];
 function route() {
   const hash = location.hash.replace(/^#\/?/, '') || 'spirits';
   const name = VIEWS.includes(hash) ? hash : 'spirits';
@@ -752,21 +752,8 @@ const NATURES = [
   ['踏实', 'hp', 'spd', '喜欢独处、非常黏人、缺乏安全感、总是忐忑不安、善于观察'],
 ];
 const STAT_LABEL6 = { hp: '生命', patk: '物攻', satk: '魔攻', pdef: '物防', sdef: '魔防', spd: '速度' };
-
-/** 天分四档。个体资质 0~10，同档内初始个体仍会不同，10 为最佳。 */
-const TALENT_TIERS = [
-  { key: 'amazing', label: '了不起的天分', rank: 4, desc: '最优选择' },
-  { key: 'good', label: '不错的天分', rank: 3, desc: '可用' },
-  { key: 'normal', label: '普通的天分', rank: 2, desc: '建议用适格钥匙刷新' },
-  { key: 'poor', label: '平庸的天分', rank: 1, desc: '建议用适格钥匙刷新' },
-];
-/** 由个体资质反推天分档位（同档内个体值不同，所以这里按区间划分，仅供参考） */
-function talentOf(iv) {
-  if (iv >= 10) return TALENT_TIERS[0];
-  if (iv >= 7) return TALENT_TIERS[1];
-  if (iv >= 4) return TALENT_TIERS[2];
-  return TALENT_TIERS[3];
-}
+// 天分档位（了不起 / 不错 / 普通 / 平庸）本来用于独立「性格·天分」页，
+// 那个页面按用户要求切掉后就没有消费方了，相关常量与 talentOf() 一并删除。
 const natureByName = new Map(NATURES.map(([n, up, down, desc]) => [n, { name: n, up, down, desc }]));
 
 /** 自检：30 种性格，且每项属性当"增"/"减"各 5 次（对不上说明转录出错） */
@@ -821,23 +808,14 @@ const panelInt = (stat, baseStat, iv = 0, nature = 'neutral') =>
 
 const STAT_ORDER = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'];
 
-/** 天分/资质/性格的初始状态：六项各自 { iv, nature } */
+/**
+ * 一只精灵的加点配置初始值：六项各自 { iv, nature }，初始都不投、性格全中性。
+ * spiritCalcOf() 用它建 Map 里的条目。
+ */
 function defaultNat(spirit = '152:1') {
   const stats = {};
   for (const k of STAT_ORDER) stats[k] = { iv: 0, nature: 'neutral' };
-  // 与实测那组一致：速度加成、物攻削弱、速度投满 60
-  stats.spd = { iv: 60, nature: 'up' };
-  stats.patk = { iv: 0, nature: 'down' };
-  return { spirit, talent: 10, star: 5, stats };
-}
-
-/** 套用某个性格名：把它"增"的那项设为 up、"减"的那项设为 down，其余中性 */
-function applyNature(name) {
-  const nat = natureByName.get(name);
-  if (!nat) return;
-  for (const k of STAT_ORDER) {
-    STATE.nat.stats[k].nature = k === nat.up ? 'up' : k === nat.down ? 'down' : 'neutral';
-  }
+  return { spirit, stats };
 }
 
 /** 星级 -> 个体倍率（5★ 为 ×6，天分10 时满 60）*/
@@ -1143,164 +1121,6 @@ function viewCalc() {
 }
 
 /* ============================================================
-   视图：天分 · 资质 · 性格（自由加点）
-   ------------------------------------------------------------
-   照游戏内面板的形态做：
-     · 六项属性各一行：图标 | 面板值 | 进度条 | [性格+ 性格− 个体]
-     · 性格是【每项独立开关】：up ×1.2 / down ×0.9 / neutral ×1.0
-     · 个体最多 3 项可投入，每项 0~60 自由分配（不必三项相同）
-     · 星级 1~5★ 影响个体上限（天分 × 星级倍率）
-   ============================================================ */
-
-/** 一行属性的控件与数值 */
-function natalRow(sp, stat) {
-  const c = STATE.nat;
-  const st = c.stats[stat];
-  const base = sp.stats[stat] ?? 0;
-  const max = c.star ? ivOf(10, c.star) : 60;      // 该项个体上限
-  const value = panelInt(stat, base, st.iv, st.nature);
-  const neutralV = panelInt(stat, base, st.iv, 'neutral');
-  const pct = Math.min(100, (value / (STAT_MAX?.[stat] ?? 200)) * 100);
-
-  const btn = (kind, label, cls) => {
-    const on = st.nature === kind;
-    return `<button class="nat-btn ${cls}${on ? ' on' : ''}" data-nat-btn="${stat}" data-nat-kind="${kind}">${label}</button>`;
-  };
-
-  // 个体：数字输入 + 是否"已投入"（最多 3 项）
-  const investedCount = STAT_ORDER.filter((k) => c.stats[k].iv > 0).length;
-  const canEdit = st.iv > 0 || investedCount < 3;
-  const delta = value - neutralV;
-
-  return `<div class="nat-line">
-    <span class="nat-ic-wrap">${stateIcon(stat)}</span>
-    <span class="nat-name">${STAT_LABEL6[stat]}</span>
-    <span class="nat-val">${value}</span>
-    <span class="nat-bar"><i class="s-${stat}" style="width:${pct}%"></i></span>
-    <span class="nat-ctl">
-      ${btn('up', '性格+', 'up')}
-      ${btn('down', '性格-', 'down')}
-      <span class="nat-iv">
-        个体
-        <input type="number" id="niv-${stat}" min="0" max="${max}" value="${st.iv}"
-               data-nat-iv="${stat}" ${canEdit ? '' : 'disabled title="最多只能投入 3 项，请先清空一项"'}>
-        <span class="nat-iv-max">/${max}</span>
-      </span>
-    </span>
-    <span class="nat-delta">${delta > 0 ? '+' + delta : delta < 0 ? delta : ''}</span>
-  </div>`;
-}
-
-function viewNature() {
-  const c = STATE.nat;
-  const sp = STATE.bySpirit.get(c.spirit) ?? STATE.data.spirits[0];
-  const iv = ivOf(c.talent, c.star);
-  const invested = STAT_ORDER.filter((k) => c.stats[k].iv > 0);
-
-  const upList = STAT_ORDER.filter((k) => c.stats[k].nature === 'up').map((k) => STAT_LABEL6[k]);
-  const downList = STAT_ORDER.filter((k) => c.stats[k].nature === 'down').map((k) => STAT_LABEL6[k]);
-  const totalIv = invested.reduce((a, k) => a + c.stats[k].iv, 0);
-
-  return `
-  <div class="page-head">
-    <h1>天分 · 资质 · 性格</h1>
-    <span class="sub">六维各行可独立开关性格加成/削弱；最多 3 项可投入个体，每项 0~60 自由分配</span>
-  </div>
-
-  <div class="natal-panel">
-    <div class="natal-row">
-      <label>精灵
-        <select id="nat-spirit" class="natal-sel">${spiritOptions(c.spirit)}</select>
-      </label>
-      <label>天分
-        <select id="nat-talent" class="natal-sel">
-          ${Array.from({ length: 11 }, (_, v) => `<option value="${v}"${v === c.talent ? ' selected' : ''}>${v}${v === 10 ? '（最高）' : ''}</option>`).join('')}
-        </select>
-      </label>
-      <label>星级
-        <select id="nat-star" class="natal-sel">
-          ${[1, 2, 3, 4, 5].map((s) => `<option value="${s}"${s === c.star ? ' selected' : ''}>${s}★${s === 5 ? '（个体上限 ' + ivOf(10, 5) + '）' : ''}</option>`).join('')}
-        </select>
-      </label>
-      <button class="chip" id="nat-reset">清空加点</button>
-    </div>
-
-    <div class="talent-box">
-      <div class="tb-main">
-        <span class="k">个体值</span>
-        <b>${iv}</b>
-        <span class="desc">= 天分 ${c.talent} × ${STAR_MULT[c.star]}（${c.star}★）　·　单项投入 0~${iv}</span>
-      </div>
-      <div class="desc" style="margin-top:6px;font-size:12px">
-        每只精灵最多把个体投在 <b>3 项</b>属性上，三项可以不同（比如 60/55/48）。
-        修改任一项后按回车或点到别处即生效。
-      </div>
-    </div>
-
-    <div class="nat-lines">${STAT_ORDER.map((k) => natalRow(sp, k)).join('')}</div>
-
-    <div class="natal-note">
-      已投入 <b>${invested.length}</b> 项（最多 3 项）${invested.length ? '：' + invested.map((k) => `${STAT_LABEL6[k]} ${c.stats[k].iv}`).join('、') : ''}
-      ${totalIv ? `　合计 ${totalIv}` : ''}
-      <div class="desc" style="margin-top:4px">
-        性格：${upList.length ? upList.map((n) => `<span class="nv-up">${n} ▲</span>`).join('、') : '无加成'}　
-        ${downList.length ? downList.map((n) => `<span class="nv-down">${n} ▼</span>`).join('、') : '无削弱'}
-        <span class="desc">（加成 ×${NATURE_MULT.up}，削弱 ×${NATURE_MULT.down}）</span>
-      </div>
-    </div>
-  </div>
-
-  <div class="section"><h3>六维对照 <span class="n">种族值 → 无性格 → 当前配置</span></h3>
-    <div class="table-wrap"><table>
-      <thead><tr><th>属性</th><th class="num">种族值</th><th class="num">个体</th>
-        <th class="num">无加成</th><th class="num">当前</th><th class="num">差值</th><th>性格</th></tr></thead>
-      <tbody>${STAT_ORDER.map((k) => {
-        const st = c.stats[k];
-        const base = sp.stats[k] ?? 0;
-        const cur = panelInt(k, base, st.iv, st.nature);
-        const neu = panelInt(k, base, st.iv, 'neutral');
-        const d = cur - neu;
-        return `<tr>
-          <td><b>${STAT_LABEL6[k]}</b></td>
-          <td class="num">${base}</td>
-          <td class="num">${st.iv}</td>
-          <td class="num">${neu}</td>
-          <td class="num"><b>${cur}</b></td>
-          <td class="num">${d ? `<b class="${d > 0 ? 'nv-pos' : 'nv-neg'}">${d > 0 ? '+' : ''}${d}</b>` : '—'}</td>
-          <td>${st.nature === 'up' ? '<span class="nv-up">加成 ×' + NATURE_MULT.up + '</span>' : st.nature === 'down' ? '<span class="nv-down">削弱 ×' + NATURE_MULT.down + '</span>' : '<span class="desc">中性</span>'}</td>
-        </tr>`;
-      }).join('')}</tbody>
-    </table></div>
-    <div class="desc" style="margin-top:8px;font-size:12px">
-      公式：<code>面板A（物攻/魔攻/物防/魔防/速度）= round(种族值 × 1.1 + 个体值 × 0.55 + 10) × 性格 + 50</code><br>
-      <code>面板B（生命）= round(种族值 × 1.7 + 个体值 × 0.85 + 70) × 性格 + 100</code><br>
-      已用实测校验：翼王(速度种族125) 个体60 加成×1.2 → 267；水灵(速度85) 个体60 → 214、(物防94) → 163、(魔防132) → 205。
-    </div>
-  </div>
-
-  <div class="section"><h3>一键套用性格 <span class="n">30 种，点击即设好"哪项加、哪项减"</span></h3>
-    <div class="table-wrap"><table>
-      <thead><tr><th>性格</th><th class="mid">加成</th><th class="mid">削弱</th><th>性格描述</th></tr></thead>
-      <tbody>${NATURES.map(([n, up, down, desc]) => `
-        <tr class="clickable" data-nat-apply="${esc(n)}">
-          <td><b>${esc(n)}</b></td>
-          <td class="mid"><span class="nv-up">${STAT_LABEL6[up]} ▲</span></td>
-          <td class="mid"><span class="nv-down">${STAT_LABEL6[down]} ▼</span></td>
-          <td class="desc">${esc(desc)}</td>
-        </tr>`).join('')}</tbody>
-    </table></div>
-  </div>`;
-}
-
-/** 六维图标（复用 stat_icons，当 mask 用） */
-function stateIcon(k) {
-  const icon = STATE.statIconByStat.get(ICON_KEY[k] ?? k);
-  if (!icon) return '';
-  const url = esc(icon.icon || icon.iconOnline);
-  return `<span class="natal-ic" style="-webkit-mask-image:url('${url}');mask-image:url('${url}')"></span>`;
-}
-
-/* ============================================================
    视图：术语
    ============================================================ */
 function viewGlossary() {
@@ -1322,7 +1142,24 @@ function viewGlossary() {
       <h4>${esc(x.name)}</h4>
       <p>${glossaryTag(x.desc)}</p>
       ${x.n ? `<div class="used">被 ${x.n} 个技能引用${x.skills.length ? '：' + x.skills.slice(0, 6).map(esc).join('、') + (x.skills.length > 6 ? '…' : '') : ''}</div>` : ''}
-    </div>`).join('')}</div>` : '<div class="empty">没有匹配的词条</div>'}`;
+    </div>`).join('')}</div>` : '<div class="empty">没有匹配的词条</div>'}
+
+  <div class="section"><h3>性格速查 <span class="n">30 种 · 每种提升 1 项、降低 1 项</span></h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>性格</th><th class="mid">加成</th><th class="mid">削弱</th><th>性格描述</th></tr></thead>
+      <tbody>${NATURES.map(([n, up, down, desc]) => `
+        <tr>
+          <td><b>${esc(n)}</b></td>
+          <td class="mid"><span class="nv-up">${STAT_LABEL6[up]} ▲</span></td>
+          <td class="mid"><span class="nv-down">${STAT_LABEL6[down]} ▼</span></td>
+          <td class="desc">${esc(desc)}</td>
+        </tr>`).join('')}</tbody>
+    </table></div>
+    <div class="desc" style="margin-top:6px;font-size:12px">
+      加成 ×${NATURE_MULT.up}、削弱 ×${NATURE_MULT.down}；本作生命也受性格影响。
+      在精灵详情里可以逐项开关（「性格+」整列至多一项、「性格−」整列至多一项，同一项不能既加又减）。
+    </div>
+  </div>`;
 }
 
 /* ============================================================
@@ -1697,7 +1534,7 @@ function selectSearch(i) {
 function render() {
   const app = $('#app');
   if (!STATE.data) return;
-  const fns = { spirits: viewSpirits, skills: viewSkills, types: viewTypes, calc: viewCalc, nature: viewNature, glossary: viewGlossary };
+  const fns = { spirits: viewSpirits, skills: viewSkills, types: viewTypes, calc: viewCalc, glossary: viewGlossary };
   app.innerHTML = (fns[STATE.view] ?? viewSpirits)();
   bindView();
 }
@@ -1745,67 +1582,6 @@ function bindView() {
   // 详情弹窗里的加点面板：改完只重画 #natalBlock（不重画整个弹窗，避免滚动位置丢失）
   bindNatalBlock();
 
-  // 天分/资质/性格：精灵/天分/星级 + 每项性格开关 + 每项个体投入
-  if ($('#nat-spirit')) {
-    $('#nat-spirit').addEventListener('change', (e) => { STATE.nat.spirit = e.target.value; render(); });
-    $('#nat-talent').addEventListener('change', (e) => {
-      STATE.nat.talent = Number(e.target.value);
-      // 天分变了，个体上限也变；把超出的投入夹回上限
-      const cap = ivOf(STATE.nat.talent, STATE.nat.star);
-      for (const k of STAT_ORDER) {
-        const st = STATE.nat.stats[k];
-        if (typeof st.iv === 'number' && st.iv > cap) st.iv = cap;
-      }
-      render();
-    });
-    $('#nat-star').addEventListener('change', (e) => {
-      STATE.nat.star = Number(e.target.value);
-      const cap = ivOf(STATE.nat.talent, STATE.nat.star);
-      for (const k of STAT_ORDER) {
-        const st = STATE.nat.stats[k];
-        if (typeof st.iv === 'number' && st.iv > cap) st.iv = cap;
-      }
-      render();
-    });
-    $('#nat-reset').addEventListener('click', () => {
-      const keep = STATE.nat.spirit;
-      STATE.nat = defaultNat(keep);
-      for (const k of STAT_ORDER) STATE.nat.stats[k].iv = 0;
-      render();
-    });
-
-    // 性格开关（每项独立，可同时多项加成/削弱）
-    for (const btn of document.querySelectorAll('[data-nat-btn]')) {
-      btn.addEventListener('click', () => {
-        const k = btn.dataset.natBtn;
-        const kind = btn.dataset.natKind;
-        const st = STATE.nat.stats[k];
-        st.nature = st.nature === kind ? 'neutral' : kind;   // 再点一次取消
-        render();
-      });
-    }
-    // 个体投入：由输入框失焦/回车时提交（避免每敲一位就重画、丢焦点）
-    for (const inp of document.querySelectorAll('[data-nat-iv]')) {
-      const commit = () => {
-        const k = inp.dataset.natIv;
-        const cap = ivOf(STATE.nat.talent, STATE.nat.star);
-        let v = Number(inp.value);
-        if (!Number.isFinite(v)) v = 0;
-        v = Math.max(0, Math.min(cap, Math.round(v)));
-        // 最多 3 项：如果这项原本是 0、且已有 3 项非 0，则拒绝
-        const others = STAT_ORDER.filter((x) => x !== k && STATE.nat.stats[x].iv > 0).length;
-        if (v > 0 && others >= 3) { toast('最多只能投入 3 项，请先清空一项'); v = 0; }
-        STATE.nat.stats[k].iv = v;
-        render();
-      };
-      inp.addEventListener('change', commit);
-      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); } });
-    }
-    // 一键套用性格
-    for (const tr of document.querySelectorAll('[data-nat-apply]')) {
-      tr.addEventListener('click', () => { applyNature(tr.dataset.natApply); render(); });
-    }
-  }
 
   // 精灵筛选
   const sq = $('#spiritQ');
@@ -2055,7 +1831,7 @@ $('#themeBtn').addEventListener('click', () => {
     window.__roco = {
       STATE, filterSpirits, filterSkills, spiritSkillsOf, learnersOf, spiritDetail, skillDetail,
       glossaryDetail, render, index, calcDamage, panelStat, levelCoef, typeEffect, usableSkillsOf,
-      NATURES, talentOf, natureByName, panelValue, panelInt, ivOf, defaultNat, applyNature, stateIcon,
+      NATURES, natureByName, panelValue, panelInt, ivOf, defaultNat, stateIcon,
       spiritCalcOf, calcStatsOf, natalBlock, bindNatalBlock, redrawNatalBlock, statBreakdown, natalBoxEl, defaultInvestSet,
     };
   } catch (err) {

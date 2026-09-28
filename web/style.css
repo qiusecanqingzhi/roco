@@ -394,27 +394,8 @@ table.matrix td {
 @media (max-width: 560px) { .calc-out { grid-template-columns: repeat(2, 1fr); } }
 
 /* ------------------------------------------------------ 性格 · 天分 */
-.natal-panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
-.natal-row { display: flex; flex-wrap: wrap; gap: 12px 18px; margin-bottom: 12px; }
-.natal-row label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-dim); }
-.natal-sel {
-  min-width: 190px; padding: 6px 8px;
-  background: var(--bg-soft); color: var(--text); border: 1px solid var(--line); border-radius: 8px;
-}
-.talent-box { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
-.talent-box .tb-main { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.talent-box .k { font-size: 12px; color: var(--text-faint); }
-.tier { font-size: 16px; }
-.tier-4 { color: #f0a52a; }
-.tier-3 { color: #6fb8ff; }
-.tier-2 { color: var(--text-dim); }
-.tier-1 { color: var(--text-faint); }
-.natal-note { background: var(--bg-soft); border-left: 3px solid var(--accent); border-radius: 8px; padding: 8px 12px; font-size: 13px; }
 .nv-up { color: #4fc06d; font-weight: 600; }
 .nv-down { color: #e06a5f; font-weight: 600; }
-.nv-pos { color: #4fc06d; }
-.nv-neg { color: #e06a5f; }
-.natal-names { display: flex; flex-wrap: wrap; gap: 5px; }
 /* 六维图标：沿用 stat_icons 的图，当 mask 用 */
 .natal-ic {
   display: inline-block; width: 20px; height: 20px; vertical-align: -4px;
@@ -433,10 +414,6 @@ table.matrix td {
 .nat-ic-wrap { flex: 0 0 auto; display: flex; }
 .nat-name { flex: 0 0 46px; font-size: 13px; color: var(--text-dim); }
 .nat-val { flex: 0 0 56px; font-size: 17px; font-weight: 700; color: var(--accent); text-align: right; }
-.nat-bar {
-  flex: 1 1 160px; min-width: 120px; height: 12px;
-  background: var(--card-hi); border-radius: 6px; overflow: hidden;
-}
 .nat-bar i { display: block; height: 100%; border-radius: 6px; background: var(--accent); }
 .nat-ctl { display: flex; align-items: center; gap: 5px; margin-left: auto; }
 .nat-btn {
@@ -447,15 +424,6 @@ table.matrix td {
 .nat-btn.down.on { background: #8d3b34; color: #fff; border-color: #8d3b34; font-weight: 700; }
 .nat-btn:hover { border-color: var(--accent); }
 .nat-iv { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-dim); }
-.nat-iv .nat-iv-k { font-size: 11px; color: var(--text-faint); }
-.nat-iv input {
-  width: 58px; padding: 3px 6px; text-align: right;
-  background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 7px;
-}
-.nat-iv input:disabled { opacity: .45; }
-.nat-iv-max { color: var(--text-faint); font-size: 11px; }
-.nat-delta { flex: 0 0 34px; text-align: right; font-size: 12px; font-weight: 600; color: var(--text-faint); }
-.nat-line:has(.nat-btn.up.on) .nat-delta { color: #4fc06d; }
 @media (max-width: 720px) {
   .nat-val { flex: 0 0 46px; font-size: 15px; }
   .nat-ctl { margin-left: 0; width: 100%; }
@@ -468,14 +436,6 @@ table.matrix td {
   margin: 10px 0 8px; padding-bottom: 8px; border-bottom: 1px dashed var(--line);
   font-size: 12px; color: var(--text-dim);
 }
-.natal-toolbar label { display: flex; align-items: center; gap: 4px; }
-.natal-sel.sm { min-width: 72px; padding: 3px 6px; margin: 0; }
-.nat-line.compact { padding: 5px 10px; gap: 8px; }
-.nat-line.compact .nat-name { flex: 0 0 40px; font-size: 12px; }
-.nat-line.compact .nat-val { flex: 0 0 48px; font-size: 15px; }
-.nat-line.compact .nat-btn { padding: 2px 7px; font-size: 11px; }
-.nat-line.compact .nat-iv input { width: 50px; padding: 2px 5px; }
-.nat-line.compact .nat-ic { width: 17px; height: 17px; }
 /* 数值条：基础部分（浅）+ 个体贡献部分（深），一眼看出"练没练" */
 .stat .bar { position: relative; overflow: hidden; }
 .stat .bar > i { position: absolute; left: 0; top: 0; height: 100%; border-radius: 6px 0 0 6px; }
@@ -491,15 +451,6 @@ table.matrix td {
 .natal-base { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); }
 .natal-base-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 .natal-base-head b { font-size: 14px; }
-table.base-table { font-size: 12px; }
-table.base-table th { font-size: 11px; color: var(--text-faint); font-weight: 500; }
-table.base-table td { padding: 5px 8px; }
-table.base-table td.num { font-variant-numeric: tabular-nums; }
-table.base-table tr:last-child td { border-bottom: none; }
-table.base-table .gain {
-  display: inline-block; margin-left: 3px; font-size: 10px; font-weight: 700;
-  color: #4fc06d; background: #4fc06d22; border-radius: 4px; padding: 0 3px;
-}
 
 /* 合并行：基础数值（基础 + 常数 + 个体 → ×性格 → +常数 = 面板）与加点控件在同一行 */
 .nat-line.combined {

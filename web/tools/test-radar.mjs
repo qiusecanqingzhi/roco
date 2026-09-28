@@ -398,41 +398,19 @@ ok(api.panelInt('satk', 127, 60, 'neutral') === 233, `水灵魔攻 233（实际 
 // 加成/中性/削弱三档
 ok(api.panelInt('spd', 125, 60, 'up') > api.panelInt('spd', 125, 60, 'neutral'), '加成 > 中性');
 ok(api.panelInt('spd', 125, 60, 'neutral') > api.panelInt('spd', 125, 60, 'down'), '中性 > 削弱');
-// 星级/天分 -> 个体
+// 星级/天分 -> 个体（ivOf 仍保留：它是"天分 × 星级倍率"的换算工具）
 ok(api.ivOf(10, 5) === 60, `天分10 5★ -> 个体 60（实际 ${api.ivOf(10, 5)}）`);
 ok(api.ivOf(10, 1) === 12, `天分10 1★ -> 个体 12（实际 ${api.ivOf(10, 1)}）`);
 ok(api.ivOf(0, 5) === 0, '天分0 -> 个体 0');
-// 套用性格
-api.applyNature('胆小');
-ok(A2.nat.stats.spd.nature === 'up' && A2.nat.stats.patk.nature === 'down', '套用「胆小」-> 速度加成、物攻削弱');
-ok(A2.nat.stats.satk.nature === 'neutral', '未被该性格涉及的项保持中性');
 
-// 天分档位由个体推断
-ok(api.talentOf(10).label === '了不起的天分', `个体 10 -> 了不起的天分（实际 ${api.talentOf(10).label}）`);
-ok(api.talentOf(0).rank < api.talentOf(10).rank, '低个体档位低于满个体');
-
-// 页面渲染（新结构：六项各自 { iv, nature }）
-A2.nat = api.defaultNat('152:1');
+// 独立的「性格 · 天分」页面已按用户要求切掉（功能并入精灵详情）
 A2.view = 'nature';
 ids.get('app').innerHTML = '';
 api.render();
-const natHtml = ids.get('app').innerHTML;
-ok(/天分 · 资质 · 性格/.test(natHtml), '渲染出性格页');
-ok(/个体值/.test(natHtml), '显示个体值');
-ok(/速度/.test(natHtml) && /物攻/.test(natHtml), '六维都有行');
-ok(/267/.test(natHtml), '算出翼王速度 267（与游戏实测一致）');
-ok((natHtml.match(/data-nat-btn="/g) || []).length === 12, `每项两个性格开关，共 12 个（实际 ${(natHtml.match(/data-nat-btn="/g) || []).length}）`);
-ok((natHtml.match(/data-nat-iv="/g) || []).length === 6, `六项各一个个体输入（实际 ${(natHtml.match(/data-nat-iv="/g) || []).length}）—— 这是独立「性格·天分」页，仍用输入框`);
-ok((natHtml.match(/data-nat-apply="/g) || []).length === 30, `性格套用表 30 行（实际 ${(natHtml.match(/data-nat-apply="/g) || []).length}）`);
-ok(/data-nat-kind="up"/.test(natHtml) && /data-nat-kind="down"/.test(natHtml), '同时有"性格+"与"性格-"开关');
-
-// 无性格时不修正
-A2.nat = api.defaultNat('152:1');
-for (const k of ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd']) A2.nat.stats[k].nature = 'neutral';
-api.render();
-const neutralHtml = ids.get('app').innerHTML;
-ok(/无加成/.test(neutralHtml), '全中性时提示「无加成」');
-ok(/231/.test(neutralHtml), '翼王速度中性与加成分开显示（中性 231）');
+ok(!/天分 · 资质 · 性格/.test(ids.get('app').innerHTML), '访问 #/nature 不再渲染性格页');
+ok(/精灵图鉴/.test(ids.get('app').innerHTML), '回退到精灵图鉴（不是白屏）');
+ok(/data-nat-kind="up"/.test(ids.get('app').innerHTML) === false, '页面上不再有整页的性格开关（只在详情弹窗里）');
+A2.view = 'spirits';
 // source_type=legendary 的技能只有 7 只精灵有，早先模板没渲染这一桶、被静默丢弃。
 /* ---------------------------------------------------------- 详情页加点面板 */
 // 这一组是这次的重点：老桩的 querySelectorAll 永远返回空，所以"事件绑定有没有生效"
@@ -467,9 +445,8 @@ ok(Object.values(wc.stats).every((x) => x.nature === 'neutral'), '初始性格�
   ok(!btn3.classList.contains('on'), '取消后按钮不再高亮');
   btn3.click();   // 留一个投满的状态给后面的用例
 }
-// 隔离性：先把独立页面的状态记下来，改完详情面板后它必须原样不变
-const natSnapshot = JSON.stringify(api.STATE.nat.stats);
-ok(JSON.stringify(api.STATE.nat.stats) === natSnapshot, '独立「性格·天分」页状态此刻有一份快照');
+// 独立「性格·天分」页已切掉，所以加点状态只剩详情面板这一份
+ok(api.STATE.nat === undefined, '已无 STATE.nat（独立页的状态随页面一起移除）');
 
 // 点「性格+」：速度加成，面板与雷达都要跟着变
 const before = api.calcStatsOf(api.STATE.bySpirit.get('152:1'), wc).spd;
@@ -526,10 +503,13 @@ ok(wc.stats.spd.nature === 'neutral', '再点一次取消加成');
   ok(ivs.join(',') === '0,0,0,0,0,0', `「清空」后六项都是 0（实际 ${ivs.join(',')}）`);
 }
 
-// 隔离性：以上所有操作都改的是"详情面板"的状态，独立页面那份必须没被动过
-ok(JSON.stringify(api.STATE.nat.stats) === natSnapshot,
-  '详情面板的改动没有串到「性格 · 天分」页面（两套状态隔离）');
-ok(api.STATE.nat !== wc, '两个状态对象不是同一个引用');
+// 加点状态只此一份（独立页已切掉），并且按精灵分开存
+{
+  const other = api.spiritCalcOf(api.STATE.bySpirit.get('466:1'));
+  ok(other !== wc, '不同精灵的加点配置是两个对象（互不影响）');
+  ok(['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].every((k) => other.stats[k].iv === 0),
+    '另一只精灵的配置仍是初始状态（没被上一只的改动串到）');
+}
 
 /* ---------------------------------------------------------- 基础数值明细 */
 // 详情页每行要把"面板值是怎么来的"和加点控件合在一起：
@@ -636,6 +616,19 @@ console.log('\n· 性格单项规则（+整列一项、−整列一项）');
   // 收尾：清干净，后面的用例从干净状态开始
   ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('#dnat-reset').click();
 }
+
+/* ---------------------------------------------------------- 性格速查（挂到术语页） */
+console.log('\n· 术语页的性格速查');
+A2.view = 'glossary';
+ids.get('app').innerHTML = '';
+api.render();
+const glHtml = ids.get('app').innerHTML;
+ok(/性格速查/.test(glHtml), '术语页有「性格速查」区块');
+ok((glHtml.match(/<tr>/g) || []).length >= 30, `性格表至少 30 行（实际 ${(glHtml.match(/<tr>/g) || []).length}）`);
+ok(/加成 ×1\.2、削弱 ×0\.9/.test(glHtml), '写明了加成/削弱系数');
+ok(/生命也受性格影响/.test(glHtml), '说明本作生命也受性格影响');
+ok(/同一项不能既加又减/.test(glHtml), '说明详情页的开关规则');
+A2.view = 'spirits';
 
 /* ---------------------------------------------------------- 传说技能 */
 // source_type=legendary 只有 7 只精灵有，早先模板没渲染这一桶、被静默丢弃。
