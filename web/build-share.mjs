@@ -71,6 +71,16 @@ copyDir(path.join(WEB, 'data'), path.join(OUT, 'data'), (s) => path.basename(s) 
 // 图片
 copyDir(path.join(WEB, 'assets'), path.join(OUT, 'assets'));
 
+// 给 index.html 里的本地资源加版本号，避免浏览器/托管缓存继续用旧版 app.js。
+// 这一步必须在复制完 data/（要读 meta.json 拿数据版本）之后做。
+{
+  const { cacheBust } = await import('./cache-bust.mjs');
+  const r = cacheBust(OUT);
+  console.log(r.changed
+    ? `✓ 已给 ${r.added.length} 个资源加版本号 ?v=${r.ver}：${r.added.join(', ')}`
+    : `· 资源版本号已是最新（?v=${r.ver}）`);
+}
+
 /* ---------------------------------------------------------- 附加文件 */
 // 托管平台常用：防止被搜索引擎收录（数据与图片版权属于原站）
 fs.writeFileSync(path.join(OUT, 'robots.txt'), 'User-agent: *\nDisallow: /\n');

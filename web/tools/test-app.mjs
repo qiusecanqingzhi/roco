@@ -155,6 +155,52 @@ const need = ['meta', 'spirits', 'skills', 'matchups', 'glossary', 'spirit-skill
 const missJson = need.filter((n) => !fs.existsSync(path.join(WEB, 'data', n + '.json')));
 ok(missJson.length === 0, `web/data/*.json 齐备（缺 ${missJson.length} 个）`);
 
+/* ------------------------------------------------ 缓存失效（改了看不到新功能的根因） */
+// index.html 里若是裸的 <script src="app.js">，部署后浏览器/Pages 缓存会继续用旧文件，
+// 表现就是"功能改了但打开还是旧的"。构建时会加 ?v=数据版本-代码哈希。
+// 这里在临时目录里跑一遍 cache-bust，验证它确实加上、且幂等（重复跑不叠加）。
+console.log('\n· 资源版本号（防缓存）');
+{
+  const os = await import('node:os');
+  const { cacheBust } = await import('../cache-bust.mjs');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'roco-cb-'));
+  fs.mkdirSync(path.join(tmp, 'data'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, 'index.html'), [
+    '<html><head>',
+    '<link rel="stylesheet" href="style.css">',
+    '<link rel="icon" href="data:image/svg+xml,<svg/>">',
+    '<script src="data-bundle.js" onerror="x"></script>',
+    '<script src="app.js"></script>',
+    '</head></html>',
+  ].join('\n'));
+  fs.writeFileSync(path.join(tmp, 'data', 'meta.json'), JSON.stringify({ catalogVersion: 'TESTVER' }));
+  fs.writeFileSync(path.join(tmp, 'app.js'), 'console.log(1)');
+  fs.writeFileSync(path.join(tmp, 'style.css'), 'body{}');
+  fs.writeFileSync(path.join(tmp, 'data-bundle.js'), 'window.ROCO_DATA={}');
+
+  const r1 = cacheBust(tmp);
+  const html1 = fs.readFileSync(path.join(tmp, 'index.html'), 'utf8');
+  ok(/app\.js\?v=TESTVER-[0-9a-f]{10}/.test(html1), '本地资源加上了 ?v=数据版本-代码哈希');
+  ok(/style\.css\?v=/.test(html1) && /data-bundle\.js\?v=/.test(html1), 'style.css 与 data-bundle.js 也加了版本号');
+  ok(!/src="app\.js"/.test(html1), '不再有裸的 src="app.js"');
+  ok(/href="data:image\/svg/.test(html1) && !/data:image\/svg[^"]*\?v=/.test(html1), 'data: URI 不被加版本号');
+  ok(r1.added.length === 3, `共 3 处加版本号（实际 ${r1.added.length}）`);
+
+  // 幂等：再跑两次，版本号不能叠加
+  cacheBust(tmp); const r3 = cacheBust(tmp);
+  const html2 = fs.readFileSync(path.join(tmp, 'index.html'), 'utf8');
+  ok(html2 === html1, '重复执行结果一致（幂等，不叠加版本号）');
+  ok(r3.changed === false, '第二次执行不再改写文件');
+  ok((html2.match(/\?v=/g) || []).length === 3, `版本号恰好 3 处（实际 ${(html2.match(/\?v=/g) || []).length}）`);
+
+  // 代码变了版本号要变（只用数据版本会漏掉"只改代码"的情况）
+  fs.writeFileSync(path.join(tmp, 'app.js'), 'console.log(2)');
+  cacheBust(tmp);
+  const html3 = fs.readFileSync(path.join(tmp, 'index.html'), 'utf8');
+  ok(html3 !== html2, '代码内容变化后版本号跟着变（只改代码也能破缓存）');
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
 /* ------------------------------------------------------ 汇总 */
 console.log('');
 if (problems.length) {
