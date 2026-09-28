@@ -486,6 +486,20 @@ table.matrix td {
 /* 雷达图上的"参考上限"标记点 */
 .radar-cap { fill: var(--text-faint); opacity: .5; }
 
+/* 基础数值明细（照游戏内属性页：把每个数字的来源列清楚） */
+.natal-base { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); }
+.natal-base-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.natal-base-head b { font-size: 14px; }
+table.base-table { font-size: 12px; }
+table.base-table th { font-size: 11px; color: var(--text-faint); font-weight: 500; }
+table.base-table td { padding: 5px 8px; }
+table.base-table td.num { font-variant-numeric: tabular-nums; }
+table.base-table tr:last-child td { border-bottom: none; }
+table.base-table .gain {
+  display: inline-block; margin-left: 3px; font-size: 10px; font-weight: 700;
+  color: #4fc06d; background: #4fc06d22; border-radius: 4px; padding: 0 3px;
+}
+
 /* ------------------------------------------------------ 术语 */
 .glossary { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
 .gitem { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }

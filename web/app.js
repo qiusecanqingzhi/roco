@@ -153,6 +153,29 @@ function calcStatsOf(sp, c) {
   return out;
 }
 
+/** 单项的完整拆解：种族值 → 个体贡献 → 性格系数 → 面板值
+ *  面板 = round(种族值 × 系数 + 个体值 × 系数 + 常数) × 性格 + 常数 */
+function statBreakdown(stat, baseStat, iv, nature) {
+  const c = STAT_COEF[stat] ?? STAT_NORMAL_COEF;
+  const coef = NATURE_MULT[nature] ?? 1;
+  const inner = Math.round(baseStat * c.base + iv * c.iv + c.flat);
+  const panel = Math.round(inner * coef + c.plus);
+  const noIvInner = Math.round(baseStat * c.base + c.flat);
+  const noIvPanel = Math.round(noIvInner * coef + c.plus);
+  const neutralPanel = Math.round(inner + c.plus);
+  return {
+    baseStat, iv, nature, coef,
+    basePart: Math.round(baseStat * c.base),     // 种族值贡献
+    flat: c.flat,
+    const: c.plus,
+    ivGain: panel - noIvPanel,                   // 个体贡献了多少面板值
+    natureGain: panel - neutralPanel,            // 性格带来多少（可为负）
+    noIvPanel,                                   // 不投个体、但保留性格时的面板值
+    neutralPanel,                                // 投了个体、但性格中性时的面板值
+    inner, panel,
+  };
+}
+
 /** 雷达图 + 数值条 + 加点控件（整体可重画）*/
 function natalBlock(sp, c) {
   const vals = calcStatsOf(sp, c);
@@ -162,20 +185,37 @@ function natalBlock(sp, c) {
   const bars = STAT_ORDER.map((k) => {
     const st = c.stats[k];
     const base = sp.stats[k] ?? 0;
-    const v = vals[k];
+    const b = statBreakdown(k, base, st.iv, st.nature);
     const denom = STAT_MAX[k] ?? 250;
-    // 分段着色：基础种族值部分（浅） + 个体贡献部分（深），一眼看出"练没练"
-    const ivGain = v - panelInt(k, base, 0, st.nature);
-    const baseW = Math.min(100, ((v - ivGain) / denom) * 100);
-    const ivW = Math.min(100 - baseW, (ivGain / denom) * 100);
+    // 分段着色：不投个体时就有的一段（浅） + 个体加上去的一段（深）
+    const baseW = Math.min(100, (b.noIvPanel / denom) * 100);
+    const ivW = Math.min(100 - baseW, (Math.max(0, b.ivGain) / denom) * 100);
     const mark = st.nature === 'up' ? '<b class="nv-up">▲</b>' : st.nature === 'down' ? '<b class="nv-down">▼</b>' : '';
     return `<div class="stat">
       <span class="k">${STAT_LABEL6[k]}${mark}</span>
-      <div class="bar s-${k}" title="${v} / 参考上限 ${denom}">
+      <div class="bar s-${k}" title="${b.panel} / 参考上限 ${denom}">
         <i style="width:${baseW}%"></i>${ivW > 0 ? `<u style="width:${ivW}%"></u>` : ''}
       </div>
-      <span class="v">${v}</span>
+      <span class="v">${b.panel}</span>
     </div>`;
+  }).join('');
+
+  // 基础数值明细表：把每个数字的来源列清楚（照游戏内属性页的形态）
+  const detail = STAT_ORDER.map((k) => {
+    const st = c.stats[k];
+    const b = statBreakdown(k, sp.stats[k] ?? 0, st.iv, st.nature);
+    const tag = st.nature === 'up'
+      ? `<span class="nv-up">▲ ×${NATURE_MULT.up}</span>`
+      : st.nature === 'down' ? `<span class="nv-down">▼ ×${NATURE_MULT.down}</span>` : '<span class="desc">—</span>';
+    return `<tr>
+      <td><span class="nat-ic-wrap">${stateIcon(k)}</span> <b>${STAT_LABEL6[k]}</b></td>
+      <td class="num">${b.baseStat}</td>
+      <td class="num">${b.basePart}</td>
+      <td class="num">${b.flat}</td>
+      <td class="num">${st.iv}${b.ivGain ? ` <span class="gain">+${b.ivGain}</span>` : ''}</td>
+      <td class="mid">${tag}</td>
+      <td class="num"><b>${b.panel}</b></td>
+    </tr>`;
   }).join('');
 
   const controls = STAT_ORDER.map((k) => {
@@ -213,6 +253,30 @@ function natalBlock(sp, c) {
       <button class="chip" id="dnat-reset">清空</button>
     </div>
     <div class="nat-lines">${controls}</div>
+
+    <div class="natal-base">
+      <div class="natal-base-head">
+        <b>基础数值</b>
+        <span class="desc">面板 = round(种族值 × 系数 + 个体值 × 系数 + 常数) × 性格 + 常数</span>
+      </div>
+      <div class="table-wrap"><table class="base-table">
+        <thead><tr>
+          <th>属性</th>
+          <th class="num">种族值</th>
+          <th class="num">种族值 × 系数</th>
+          <th class="num">常数</th>
+          <th class="num">个体值</th>
+          <th class="mid">性格</th>
+          <th class="num">面板值</th>
+        </tr></thead>
+        <tbody>${detail}</tbody>
+      </table></div>
+      <div class="desc" style="margin-top:6px;font-size:12px">
+        生命用另一套系数（种族值 × 1.7 + 个体值 × 0.85 + 70，最后 + 100）；
+        其余五项是 种族值 × 1.1 + 个体值 × 0.55 + 10，最后 + 50。
+        「个体值」列括号里的数字是它实际带来的面板增量（会被性格放大或缩小）。
+      </div>
+    </div>
   </div>`;
 }
 
@@ -1945,7 +2009,7 @@ $('#themeBtn').addEventListener('click', () => {
       STATE, filterSpirits, filterSkills, spiritSkillsOf, learnersOf, spiritDetail, skillDetail,
       glossaryDetail, render, index, calcDamage, panelStat, levelCoef, typeEffect, usableSkillsOf,
       NATURES, talentOf, natureByName, panelValue, panelInt, ivOf, defaultNat, applyNature, stateIcon,
-      spiritCalcOf, calcStatsOf, natalBlock, bindNatalBlock, redrawNatalBlock,
+      spiritCalcOf, calcStatsOf, natalBlock, bindNatalBlock, redrawNatalBlock, statBreakdown, natalBoxEl,
     };
   } catch (err) {
     $('#app').innerHTML = `
