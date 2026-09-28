@@ -539,6 +539,17 @@ table.base-table .gain {
   .nat-line.combined .nat-barwrap { flex: 1 1 100%; }
 }
 
+/* 「个体」控件的状态：投了的行高亮（对应模拟器里那个高亮按钮） */
+.nat-line.combined .nat-iv {
+  padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--card);
+}
+.nat-line.combined .nat-iv.is-on {
+  background: color-mix(in srgb, var(--accent) 28%, var(--card));
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+.nat-line.combined .nat-iv.is-on .nat-iv-k { color: var(--text); font-weight: 600; }
+.nat-line.combined .nat-iv.is-on input { background: #ffffffcc; font-weight: 700; }
+
 /* ------------------------------------------------------ 术语 */
 .glossary { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
 .gitem { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }

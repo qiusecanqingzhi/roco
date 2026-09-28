@@ -139,9 +139,10 @@ function index(data) {
  * 不复用 STATE.nat —— 否则弹窗里改加点会串到「性格 · 天分」页面上。
  * 详情页的个体上限固定 60（不区分天分/星级）：面板值已经把基础数值含进去了，
  * 再选星级会让人以为"星级影响面板"，所以只保留个体投入与性格开关。
- * 个体【默认就有 3 项是满 60】：实际练起来的精灵基本都把可投的项投满了，
- * 默认全 0 只会让人每次都要手填。但不能六项都给 60（游戏只允许投 3 项），
- * 所以默认取前三项（生命 / 物攻 / 魔攻）为 60，其余 0 —— 想换哪三项自己改。
+ * 个体【默认就有 3 项是满 60，选哪 3 项看这只精灵自己】：实际练起来的精灵基本都
+ * 把可投的项投满了，默认全 0 只会让人每次手填；而选哪三项要看精灵的种族值 ——
+ * 个体加在它本来就高的项上才有意义。所以这里自动挑【种族值最高的 3 项】（生命按
+ * 1.7 系数折算后再比），用户想改哪三项自己改。
  * "最多 3 项"的限制保留（这是游戏规则，工具要挡住，否则会算出游戏里不存在的面板）。
  */
 function spiritCalcOf(sp) {
@@ -149,7 +150,9 @@ function spiritCalcOf(sp) {
   STATE.spiritCalc ??= new Map();
   if (!STATE.spiritCalc.has(key)) {
     const c = defaultNat(key);
-    STAT_ORDER.forEach((k, i) => { c.stats[k] = { iv: i < 3 ? IV_MAX : 0, nature: 'neutral' }; });
+    // 默认投满该精灵种族值最高的 3 项（选哪些由精灵自己决定）
+    const top3 = defaultInvestSet(sp);
+    for (const k of STAT_ORDER) c.stats[k] = { iv: top3.has(k) ? IV_MAX : 0, nature: 'neutral' };
     STATE.spiritCalc.set(key, c);
   }
   return STATE.spiritCalc.get(key);
@@ -185,6 +188,20 @@ function statBreakdown(stat, baseStat, iv, nature) {
   };
 }
 
+/**
+ * 默认投满哪 3 项：取该精灵种族值折算后最高的三项（生命按 1.7 系数算）。
+ * 用户改过之后就按用户改的来（配置存在 STATE.spiritCalc 里，同一只精灵只算一次）。
+ */
+function defaultInvestSet(sp) {
+  const ranked = STAT_ORDER
+    .map((k) => {
+      const coef = STAT_COEF[k] ?? STAT_NORMAL_COEF;
+      return { k, weight: (sp.stats[k] ?? 0) * coef.base };
+    })
+    .sort((a, b) => b.weight - a.weight);
+  return new Set(ranked.slice(0, 3).map((x) => x.k));
+}
+
 /** 雷达图 + 数值条 + 加点控件（整体可重画）*/
 function natalBlock(sp, c) {
   const vals = calcStatsOf(sp, c);
@@ -192,6 +209,7 @@ function natalBlock(sp, c) {
   // 「最多 3 项」是游戏规则，要保留 —— 否则会算出游戏里不存在的面板
   const invested = STAT_ORDER.filter((k) => c.stats[k].iv > 0).length;
   const canInvestMore = invested < 3;
+  const defSet = defaultInvestSet(sp);          // 用于提示"默认给了哪三项"
 
   const bars = STAT_ORDER.map((k) => {
     const st = c.stats[k];
@@ -244,7 +262,7 @@ function natalBlock(sp, c) {
 
       <span class="nat-ctl">
         ${btn('up', '性格+')}${btn('down', '性格−')}
-        <span class="nat-iv"><span class="nat-iv-k">个体</span>
+        <span class="nat-iv${st.iv > 0 ? ' is-on' : ''}"><span class="nat-iv-k">个体</span>
           <input type="number" id="dniv-${k}" min="0" max="${cap}" value="${st.iv}"
                  data-nat-iv="${k}" data-in-modal="1"
                  ${st.iv > 0 || canInvestMore ? '' : 'disabled title="最多只能投入 3 项，请先清空一项"'}
@@ -266,9 +284,9 @@ function natalBlock(sp, c) {
       <div class="stat-bars">${bars}</div>
     </div>
     <div class="natal-toolbar">
-      <span class="desc">个体上限 <b>${IV_MAX}</b>　已投入 <b>${invested}/3</b> 项</span>
-      <span class="desc">（面板值已含基础数值，所以不再需要天分/星级）</span>
-      <button class="chip" id="dnat-reset">清空</button>
+      <span class="desc">个体上限 <b>${IV_MAX}</b>　已投入 <b>${invested}/3</b> 项${defSet.size ? `（默认给种族值最高的 ${[...defSet].map((k) => STAT_LABEL6[k]).join('、')}）` : ''}</span>
+      <span class="desc">想换哪三项：把不投的改成 0 腾出名额，再填你要的那项</span>
+      <button class="chip" id="dnat-reset">恢复默认</button>
     </div>
     <div class="nat-lines">${controls}</div>
 
@@ -1910,10 +1928,10 @@ function bindNatalBlock() {
       redrawNatalBlock(key);
     });
   }
-  // 详情页不设天分/星级（面板值已含基础数值，个体上限固定 60），所以没有 clampIv 那套。
-  // 「清空」= 回到默认（前三项 60、其余 0），不是全清零 —— 全零不是常态
+  // 「恢复默认」= 回到"种族值最高三项满 60"，而不是全零（全零不是常态）
   box.querySelector('#dnat-reset')?.addEventListener('click', () => {
-    STAT_ORDER.forEach((k, i) => { c.stats[k] = { iv: i < 3 ? IV_MAX : 0, nature: 'neutral' }; });
+    const top3 = defaultInvestSet(sp);
+    for (const k of STAT_ORDER) c.stats[k] = { iv: top3.has(k) ? IV_MAX : 0, nature: 'neutral' };
     redrawNatalBlock(key);
   });
   // 个体投入：失焦/回车提交。保留「最多 3 项」的游戏规则
@@ -2014,7 +2032,7 @@ $('#themeBtn').addEventListener('click', () => {
       STATE, filterSpirits, filterSkills, spiritSkillsOf, learnersOf, spiritDetail, skillDetail,
       glossaryDetail, render, index, calcDamage, panelStat, levelCoef, typeEffect, usableSkillsOf,
       NATURES, talentOf, natureByName, panelValue, panelInt, ivOf, defaultNat, applyNature, stateIcon,
-      spiritCalcOf, calcStatsOf, natalBlock, bindNatalBlock, redrawNatalBlock, statBreakdown, natalBoxEl,
+      spiritCalcOf, calcStatsOf, natalBlock, bindNatalBlock, redrawNatalBlock, statBreakdown, natalBoxEl, defaultInvestSet,
     };
   } catch (err) {
     $('#app').innerHTML = `

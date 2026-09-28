@@ -71,8 +71,9 @@ console.log('\n· 外侧标签（图标 + 数值）');
 const EXPECT_LABELS = ['生命', '魔攻', '魔防', '速度', '物防', '物攻'];
 const sp466 = api.STATE.bySpirit.get('466:1');
 const PANEL_KEYS = ['hp', 'satk', 'sdef', 'spd', 'pdef', 'patk'];
-// 详情页默认个体：前三项 60，其余 0（顺序同 STAT_ORDER）
-const DEF_IV_OF = (k) => (['hp', 'patk', 'satk'].includes(k) ? 60 : 0);
+// 详情页默认个体：投满"种族值最高的三项"（由 defaultInvestSet 决定），其余 0
+const defSet466 = api.defaultInvestSet(sp466);
+const DEF_IV_OF = (k) => (defSet466.has(k) ? 60 : 0);
 const hpVal = api.panelInt('hp', sp466.stats.hp, DEF_IV_OF('hp'), 'neutral');
 const patkVal = api.panelInt('patk', sp466.stats.patk, DEF_IV_OF('patk'), 'neutral');
 const satkVal = api.panelInt('satk', sp466.stats.satk, DEF_IV_OF('satk'), 'neutral');
@@ -452,12 +453,23 @@ ok(maxes.length === 6 && maxes.every((m) => m === '60'), `六个输入框上限�
 // 默认：前三项（生命/物攻/魔攻）个体满 60、其余 0；性格全中性
 // —— 面板与独立页面用两套状态，互不影响
 const wc = api.spiritCalcOf(api.STATE.bySpirit.get('152:1'));
-ok(wc.stats.hp.iv === 60 && wc.stats.patk.iv === 60 && wc.stats.satk.iv === 60,
-  `默认前三项满 60（实际 ${wc.stats.hp.iv}/${wc.stats.patk.iv}/${wc.stats.satk.iv}）`);
-ok(wc.stats.pdef.iv === 0 && wc.stats.sdef.iv === 0 && wc.stats.spd.iv === 0,
-  `默认后三项为 0（实际 ${wc.stats.pdef.iv}/${wc.stats.sdef.iv}/${wc.stats.spd.iv}）`);
+const wingDefSet = api.defaultInvestSet(api.STATE.bySpirit.get('152:1'));
+ok(['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].every((k) => wc.stats[k].iv === (wingDefSet.has(k) ? 60 : 0)),
+  `默认投满"种族值最高三项"：${[...wingDefSet].map((k) => k).join(',')}（实际 ${JSON.stringify(Object.fromEntries(['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].map((k) => [k, wc.stats[k].iv]))) }）`);
+ok(wingDefSet.size === 3, '默认正好选中 3 项');
 ok(Object.values(wc.stats).filter((x) => x.iv > 0).length === 3, '默认正好投了 3 项（符合游戏规则）');
 ok(Object.values(wc.stats).every((x) => x.nature === 'neutral'), '默认性格全中性');
+// 「个体」控件：投了的行要高亮（对应模拟器里那个高亮按钮）
+{
+  const lines = [...ids.get('modalBody')._el.querySelector('#natalBlock').querySelectorAll('.nat-line.combined')];
+  const lineOf = (k) => lines.find((l) => l.querySelector(`[data-nat-iv="${k}"]`));
+  const investedKey = [...wingDefSet][0];
+  const freeKey0 = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].find((k) => !wingDefSet.has(k));
+  ok(lineOf(investedKey).querySelector('.nat-iv').classList.contains('is-on'),
+    `投了个体的行（${investedKey}）的「个体」控件高亮`);
+  ok(!lineOf(freeKey0).querySelector('.nat-iv').classList.contains('is-on'),
+    `没投的行（${freeKey0}）不高亮`);
+}
 // 隔离性：先把独立页面的状态记下来，改完详情面板后它必须原样不变
 const natSnapshot = JSON.stringify(api.STATE.nat.stats);
 ok(JSON.stringify(api.STATE.nat.stats) === natSnapshot, '独立「性格·天分」页状态此刻有一份快照');
@@ -483,13 +495,14 @@ const box3 = ids.get('modalBody')._el.querySelector('#natalBlock');
 // 默认速度是 0（只投了前三项），给它投 60 应该成功
 const ivInput = box3.querySelector('[data-nat-iv="spd"]');
 ok(!!ivInput, '取到速度的个体输入框');
-ok(wc.stats.spd.iv === 0, '速度默认是 0（默认只投前三项）');
+const freeKey = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].find((k) => !wingDefSet.has(k));
+ok(wc.stats[freeKey].iv === 0, `默认没投的项（${freeKey}）是 0`);
 {
-  // 先把生命清掉，腾出一项名额
-  const hpInp = ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('[data-nat-iv="hp"]');
+  // 先把一项清掉，腾出名额
+  const hpInp = ids.get('modalBody')._el.querySelector('#natalBlock').querySelector(`[data-nat-iv="${freeKey}"]`);
   hpInp.value = '0';
   hpInp.dispatch('change');
-  ok(wc.stats.hp.iv === 0, '把生命清 0 后腾出名额');
+  ok(wc.stats[freeKey].iv === 0, `把 ${freeKey} 清 0 后腾出名额`);
   const inp = ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('[data-nat-iv="spd"]');
   inp.value = '60';
   inp.dispatch('change');
@@ -504,8 +517,8 @@ ok(wc.stats.spd.iv === 0, '速度默认是 0（默认只投前三项）');
 }
 // 「最多 3 项」必须保留：已经投满 3 项时，第 4 项会被拒（回到 0）
 {
-  const filled = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].filter((x) => wc.stats[x].iv > 0);
-  ok(filled.length === 3, `当前正好投了 3 项（${filled.join(',')}）`);
+  const filled0 = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].filter((x) => wc.stats[x].iv > 0);
+  ok(filled0.length === 3, `当前正好投了 3 项（${filled0.join(',')}）`);
   const free = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].find((x) => wc.stats[x].iv === 0);
   const inp = ids.get('modalBody')._el.querySelector('#natalBlock').querySelector(`[data-nat-iv="${free}"]`);
   ok(!!inp, `找到没投的那项 ${free}`);
@@ -518,7 +531,8 @@ ok(wc.stats.spd.iv === 0, '速度默认是 0（默认只投前三项）');
 {
   ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('#dnat-reset').click();
   const ivs = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].map((x) => wc.stats[x].iv);
-  ok(ivs.join(',') === '60,60,60,0,0,0', `「清空」回到默认 60,60,60,0,0,0（实际 ${ivs.join(',')}）`);
+  const want = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].map((x) => (wingDefSet.has(x) ? 60 : 0));
+  ok(ivs.join(',') === want.join(','), `「恢复默认」回到 ${want.join(',')}（实际 ${ivs.join(',')}）`);
 }
 
 // 隔离性：以上所有操作都改的是"详情面板"的状态，独立页面那份必须没被动过
