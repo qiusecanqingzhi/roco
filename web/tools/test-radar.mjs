@@ -220,6 +220,25 @@ ok(at('升级学会') < at('技能石'), '顺序为 升级学会 → 技能石 �
 // 血脉技能行里要有技能图标
 ok(/class="skill-icon"/.test(orderHtml) && /data-skill="7020880"/.test(orderHtml), '血脉技能行带技能图标且可点开');
 
+/* ---------------------------------------------------------- 不要外链 */
+// 按需求移除了详情里「在原站打开」的链接（页脚的来源声明保留）。
+// 注意：详情里仍然会出现 roco.world —— 那是图片的兜底地址（data-fallback），
+// 不是导航链接，所以断言只查 <a href="...roco.world">，不查域名本身。
+console.log('\n· 详情里不再有原站外链');
+const linkRe = /<a[^>]+href="[^"]*roco\.world/;
+api.spiritDetail('466:1');
+const noLinkSpirit = ids.get('modalBody').innerHTML;
+ok(!linkRe.test(noLinkSpirit), '精灵详情里没有指向 roco.world 的 <a> 链接');
+ok(!/在原站打开/.test(noLinkSpirit), '精灵详情里没有「在原站打开」');
+ok(/data-copy/.test(noLinkSpirit), '「复制名称」按钮仍保留');
+api.skillDetail(7040250);
+const noLinkSkill = ids.get('modalBody').innerHTML;
+ok(!linkRe.test(noLinkSkill), '技能详情里没有指向 roco.world 的 <a> 链接');
+ok(!/在原站打开/.test(noLinkSkill), '技能详情里没有「在原站打开」');
+api.glossaryDetail(1001);
+const noLinkGloss = ids.get('modalBody').innerHTML;
+ok(!linkRe.test(noLinkGloss), '术语弹窗里没有指向 roco.world 的 <a> 链接');
+
 /* ---------------------------------------------------------- 传说技能 */
 // source_type=legendary 的技能只有 7 只精灵有，早先模板没渲染这一桶、被静默丢弃。
 console.log('\n· 传说技能');

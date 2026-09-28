@@ -672,7 +672,6 @@ function spiritDetail(key, lvFromSkillId = null) {
 
     <div class="section"><h3>快捷链接</h3>
       <div class="frow">
-        <a class="chip" href="${esc(sp.url)}" target="_blank" rel="noopener">在原站打开 #${sp.id}</a>
         <button class="chip" data-copy="${esc(sp.name)}">复制名称</button>
       </div>
     </div>
@@ -761,7 +760,6 @@ function skillDetail(skillId, ownerKey = null) {
     <div class="section"><h3>效果</h3><div class="passive">${glossaryTag(sk.desc)}</div></div>
     ${groupBlock('level_up')}${groupBlock('spirit_stone')}${groupBlock('bloodline_elixir')}
     <div class="section"><h3>快捷链接</h3><div class="frow">
-      <a class="chip" href="https://roco.world/zh/skills/${sk.id}" target="_blank" rel="noopener">在原站打开</a>
       <button class="chip" data-copy="${esc(sk.name)}">复制名称</button>
     </div></div>
   `);
@@ -1026,7 +1024,7 @@ $('#themeBtn').addEventListener('click', () => {
     route();
     console.log('[roco] 数据就绪', c);
     // 给自动化测试用的只读钩子（浏览器里也可以 console 里手动查）
-    window.__roco = { STATE, filterSpirits, filterSkills, spiritSkillsOf, learnersOf, spiritDetail, skillDetail, render, index };
+    window.__roco = { STATE, filterSpirits, filterSkills, spiritSkillsOf, learnersOf, spiritDetail, skillDetail, glossaryDetail, render, index };
   } catch (err) {
     $('#app').innerHTML = `
       <div class="empty">
