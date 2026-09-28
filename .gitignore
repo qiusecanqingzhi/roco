@@ -19,3 +19,6 @@ tools/workflow-snapshot/.npmcache/
 *.log
 .DS_Store
 Thumbs.db
+
+# 测试用的临时 SSH 目录
+.ssh-test-home/
