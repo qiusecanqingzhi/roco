@@ -442,9 +442,12 @@ api.spiritDetail('152:1');                       // 翼王：速度种族 125
 const modal = ids.get('modalBody')._el;
 const box = modal.querySelector('#natalBlock');
 ok(!!box, '详情里渲染出加点面板 #natalBlock');
-ok(!!box.querySelector('#dnat-talent') && !!box.querySelector('#dnat-star'), '面板里有天分/星级选择');
+ok(!box.querySelector('#dnat-talent') && !box.querySelector('#dnat-star'), '详情面板里没有天分/星级下拉（个体上限常驻 60）');
 ok(box.querySelectorAll('[data-nat-btn]').length === 12, `每项两个性格开关，共 12 个（实际 ${box.querySelectorAll('[data-nat-btn]').length}）`);
 ok(box.querySelectorAll('[data-nat-iv]').length === 6, '六项各一个个体输入');
+// 输入框的 max 都应是 60
+const maxes = [...box.querySelectorAll('[data-nat-iv]')].map((i) => i.getAttribute('max'));
+ok(maxes.length === 6 && maxes.every((m) => m === '60'), `六个输入框上限都是 60（实际 ${maxes.join(',')}）`);
 
 // 默认：个体 0、中性 —— 且面板与独立页面用两套状态，互不影响
 const wc = api.spiritCalcOf(api.STATE.bySpirit.get('152:1'));

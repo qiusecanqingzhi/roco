@@ -134,6 +134,12 @@ function index(data) {
    不复用 STATE.nat —— 否则弹窗里改加点会串到「性格 · 天分」页面上。
    雷达图与数值条都按当前配置实时重算，改一下就能看到形状变化。
    ============================================================ */
+/**
+ * 详情弹窗用【按精灵分开存储】的配置（STATE.spiritCalc），
+ * 不复用 STATE.nat —— 否则弹窗里改加点会串到「性格 · 天分」页面上。
+ * 详情页的个体上限固定 60（不区分天分/星级）：面板值已经把基础数值含进去了，
+ * 再选星级会让人以为"星级影响面板"，所以只保留个体投入与性格开关。
+ */
 function spiritCalcOf(sp) {
   const key = `${sp.id}:${sp.formId}`;
   STATE.spiritCalc ??= new Map();
@@ -179,7 +185,7 @@ function statBreakdown(stat, baseStat, iv, nature) {
 /** 雷达图 + 数值条 + 加点控件（整体可重画）*/
 function natalBlock(sp, c) {
   const vals = calcStatsOf(sp, c);
-  const cap = ivOf(c.talent, c.star);
+  const cap = IV_MAX;
   const invested = STAT_ORDER.filter((k) => c.stats[k].iv > 0).length;
 
   const bars = STAT_ORDER.map((k) => {
@@ -254,13 +260,8 @@ function natalBlock(sp, c) {
       <div class="stat-bars">${bars}</div>
     </div>
     <div class="natal-toolbar">
-      <label>天分 <select id="dnat-talent" class="natal-sel sm">
-        ${Array.from({ length: 11 }, (_, v) => `<option value="${v}"${v === c.talent ? ' selected' : ''}>${v}</option>`).join('')}
-      </select></label>
-      <label>星级 <select id="dnat-star" class="natal-sel sm">
-        ${[1, 2, 3, 4, 5].map((s) => `<option value="${s}"${s === c.star ? ' selected' : ''}>${s}★</option>`).join('')}
-      </select></label>
-      <span class="desc">个体上限 ${cap}　已投入 ${invested}/3 项</span>
+      <span class="desc">个体上限 <b>${IV_MAX}</b>　已投入 ${invested}/3 项</span>
+      <span class="desc">（面板值已含基础数值，所以不再需要天分/星级）</span>
       <button class="chip" id="dnat-reset">清空</button>
     </div>
     <div class="nat-lines">${controls}</div>
@@ -802,6 +803,9 @@ function applyNature(name) {
 /** 星级 -> 个体倍率（5★ 为 ×6，天分10 时满 60）*/
 const STAR_MULT = { 1: 1.2, 2: 2.4, 3: 3.6, 4: 4.8, 5: 6 };
 const ivOf = (talent, star) => Math.round(talent * (STAR_MULT[star] ?? 1));
+
+/** 个体值上限：常驻 60（详情页不再区分天分/星级，因为面板值已经包含基础数值那部分） */
+const IV_MAX = 60;
 
 /** 兼容旧调用：按 0~60 的个体值 + 性格系数换算面板 */
 const panelStat = (base, iv = 0, natureMult = 1, stat = 'patk') =>
@@ -1900,15 +1904,7 @@ function bindNatalBlock() {
       redrawNatalBlock(key);
     });
   }
-  // 天分 / 星级：个体上限变化，把超出的投入夹回
-  const talentSel = box.querySelector('#dnat-talent');
-  const starSel = box.querySelector('#dnat-star');
-  const clampIv = () => {
-    const cap = ivOf(c.talent, c.star);
-    for (const k of STAT_ORDER) if (c.stats[k].iv > cap) c.stats[k].iv = cap;
-  };
-  talentSel?.addEventListener('change', () => { c.talent = Number(talentSel.value); clampIv(); redrawNatalBlock(key); });
-  starSel?.addEventListener('change', () => { c.star = Number(starSel.value); clampIv(); redrawNatalBlock(key); });
+  // 详情页不设天分/星级（面板值已含基础数值，个体上限固定 60），所以没有 clampIv 那套
   box.querySelector('#dnat-reset')?.addEventListener('click', () => {
     for (const k of STAT_ORDER) c.stats[k] = { iv: 0, nature: 'neutral' };
     redrawNatalBlock(key);
@@ -1917,7 +1913,7 @@ function bindNatalBlock() {
   for (const inp of box.querySelectorAll('[data-nat-iv]')) {
     const commit = () => {
       const k = inp.dataset.natIv;
-      const cap = ivOf(c.talent, c.star);
+      const cap = IV_MAX;
       let v = Number(inp.value);
       if (!Number.isFinite(v)) v = 0;
       v = Math.max(0, Math.min(cap, Math.round(v)));
