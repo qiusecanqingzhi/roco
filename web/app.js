@@ -585,6 +585,7 @@ function bloodlineSection(sp) {
     <tr>
       <td class="mid">${b.icon ? `<span class="bl-icon">${imgTag(b.icon, null, b.name)}</span>` : ''}</td>
       <td>${esc(b.name)}</td>
+      <td class="mid">${b.skillIcon ? imgTag(b.skillIcon, null, b.skill ?? '', 'skill-icon') : ''}</td>
       <td class="skill-name">${b.skillId ? `<span class="clickable-inline" data-skill="${b.skillId}">${esc(b.skill)}</span>` : '<span class="desc">—</span>'}</td>
       <td class="num">${b.lv ?? '—'}</td>
       <td class="mid">${b.skillId ? badge(STATE.bySkill.get(b.skillId)?.typeId) : ''}</td>
@@ -597,7 +598,7 @@ function bloodlineSection(sp) {
       ${list.length > BLOODLINE_PREVIEW ? `<button class="link-btn" id="toggleBloodline">${expanded ? '收起' : `展开全部 ${list.length} 种`}</button>` : ''}
     </h3>
     <div class="table-wrap"><table>
-      <thead><tr><th class="mid">血脉</th><th>名称</th><th>给予技能</th><th class="num">解锁</th><th class="mid">系别</th><th class="mid">秘药</th></tr></thead>
+      <thead><tr><th class="mid">血脉</th><th>名称</th><th class="mid">技能图标</th><th>给予技能</th><th class="num">解锁</th><th class="mid">系别</th><th class="mid">秘药</th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
     <div class="desc" style="margin-top:6px;font-size:12px">
@@ -665,11 +666,11 @@ function spiritDetail(key, lvFromSkillId = null) {
 
     ${evo ? `<div class="section"><h3>进化链</h3><div class="evo">${evo}</div></div>` : ''}
 
-    ${bloodlineSection(sp)}
-
     <div class="section"><h3>升级学会 <span class="n">${skills.level.length}</span></h3>${skillTable(skills.level, true)}</div>
     ${skills.machine.length ? `<div class="section"><h3>技能石 <span class="n">${skills.machine.length}</span></h3>${skillTable(skills.machine, false)}</div>` : ''}
     ${skills.blood.length ? `<div class="section"><h3>血脉 <span class="n">${skills.blood.length}</span></h3>${skillTable(skills.blood, false)}</div>` : ''}
+
+    ${bloodlineSection(sp)}
 
     ${family.length > 1 ? `<div class="section"><h3>同族</h3><div class="evo">${family.map((f) => {
       const m = /^#(\d+)(.*)$/.exec(f);

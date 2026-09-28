@@ -204,6 +204,16 @@ for (const key of Object.keys(api.STATE.data.spiritBloodlines).slice(0, 40)) {
 ok(bad === 0, `抽查 40 只精灵的血脉区块，无 undefined/NaN（实际 ${bad}）`);
 api.STATE.expandedBloodlines = false;
 
+// 血脉技能区块必须在「技能石」之后
+api.spiritDetail('466:1');
+const orderHtml = ids.get('modalBody').innerHTML;
+const at = (s) => orderHtml.indexOf(s);
+ok(at('技能石') > 0 && at('血脉技能') > at('技能石'),
+  `「血脉技能」排在「技能石」之后（技能石@${at('技能石')} < 血脉技能@${at('血脉技能')}）`);
+ok(at('升级学会') < at('技能石'), '顺序为 升级学会 → 技能石 → 血脉技能');
+// 血脉技能行里要有技能图标
+ok(/class="skill-icon"/.test(orderHtml) && /data-skill="7020880"/.test(orderHtml), '血脉技能行带技能图标且可点开');
+
 console.log('');
 if (problems.length) {
   console.log(`✗ ${problems.length} 项不通过:`);
