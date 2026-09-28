@@ -1,0 +1,21 @@
+# ============ 抓取产物（可再生产物，不必入库） ============
+# 缓存里有 1200+ 个原始 JSON（约 470 MB），交给 CI 每次现抓，不要提交
+out/
+out-py/
+
+# 分享包：由 node web/build-share.mjs 生成
+dist-share/
+dist-share.zip
+
+# 网页数据与图片：这些【要】入库（Pages 直接发布它们），所以不忽略
+# web/data/  web/assets/  web/data-bundle.js
+
+# ============ 杂项 ============
+# 工作流校验用的 yaml 解析器（按需 npm install，不入库）
+tools/workflow-snapshot/node_modules/
+tools/workflow-snapshot/.npmcache/
+.edge-profile/
+.edge2/
+*.log
+.DS_Store
+Thumbs.db

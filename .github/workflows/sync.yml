@@ -1,0 +1,133 @@
+name: 同步图鉴数据
+
+# 定时从 roco.world 重新抓取并发布；也可以在仓库 Actions 页手动触发。
+#
+# 逻辑：先只比对上游版本；没变且是定时触发 → 直接结束（不浪费 Actions 额度）。
+#       变了 / 手动触发 / 页面代码有改动 → 同步并重新发布。
+# 数据与图片（web/data、web/assets）提交回仓库，顺便当作 Pages 的产物内容。
+
+on:
+  schedule:
+    - cron: '17 4 * * 1,4'      # 每周一、四 04:17 UTC（北京时间 12:17）；GitHub 可能延迟几分钟
+  workflow_dispatch:
+    inputs:
+      force:
+        description: '忽略版本比对，强制重抓并重新发布'
+        type: boolean
+        default: false
+      locale:
+        description: '要同步的语言'
+        type: choice
+        options: [zh-Hans, en-US, vi-VN, pt-BR, ja-JP]
+        default: zh-Hans
+  push:
+    branches: [main]
+    paths:
+      - 'web/index.html'
+      - 'web/app.js'
+      - 'web/style.css'
+      - '.github/workflows/sync.yml'
+
+permissions:
+  contents: write               # 提交数据变更
+  pages: write                  # 发布 Pages
+  id-token: write
+
+concurrency:
+  group: sync-and-deploy
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    outputs:
+      publish: ${{ steps.plan.outputs.publish }}
+      changed: ${{ steps.sync.outputs.changed }}
+      version: ${{ steps.sync.outputs.local_version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # 只比对版本，不抓不写；脚本用退出码 10 表示"上游有更新"
+      - name: 检查上游版本
+        id: check
+        continue-on-error: true
+        env:
+          LOCALE: ${{ inputs.locale || 'zh-Hans' }}
+        run: node tools/sync.mjs --check --locale "$LOCALE"
+
+      - name: 决定是否同步
+        id: plan
+        env:
+          FORCE: ${{ inputs.force }}
+          CHANGED: ${{ steps.check.outputs.changed }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$FORCE" = "true" ] || [ "$CHANGED" = "true" ] || [ "$EVENT" != "schedule" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "→ 将执行同步并重新发布"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "→ 上游无更新，本次跳过（省额度）"
+          fi
+
+      - name: 同步（抓取 → 导出 → 补图 → 打包）
+        id: sync
+        if: steps.plan.outputs.publish == 'true'
+        env:
+          LOCALE: ${{ inputs.locale || 'zh-Hans' }}
+          ROCO_DEPLOY: gh-pages          # 让 README.txt 里写明"本目录由 Actions 自动发布"
+        run: node tools/sync.mjs --locale "$LOCALE"
+
+      # 自检：默认只跑零依赖的检查，避免上游站点抖动导致发布失败。
+      # 想连页面测试一起跑，就在仓库 Variables 里设 RUN_PAGE_TESTS=true
+      - name: 自检
+        if: steps.plan.outputs.publish == 'true'
+        run: |
+          node tools/chk-markup.mjs
+          node web/tools/test-app.mjs
+          if [ "${{ vars.RUN_PAGE_TESTS }}" = "true" ]; then
+            node web/tools/test-app2.mjs
+          fi
+
+      - name: 检查数据是否有实际变化
+        id: diff
+        if: steps.plan.outputs.publish == 'true'
+        run: |
+          if [ "${{ steps.sync.outputs.changed }}" = "true" ] || ! git diff --quiet -- web/data web/assets web/data-bundle.js; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "→ 数据有变化，将提交"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "→ 数据无实际变化"
+          fi
+
+      - name: 提交数据变更
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add web/data web/assets web/data-bundle.js
+          git commit -m "chore(data): 同步上游 ${{ steps.sync.outputs.local_version }}（精灵 ${{ steps.sync.outputs.spirits }} / 技能 ${{ steps.sync.outputs.skills }}）"
+          git push
+
+      - name: 上传 Pages 产物
+        if: steps.plan.outputs.publish == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist-share
+
+  deploy:
+    needs: sync
+    if: needs.sync.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

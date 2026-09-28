@@ -1,0 +1,190 @@
+{
+ "locale": "zh-Hans",
+ "catalogVersion": "f2bc7789ad9c",
+ "generatedAt": "2026-09-28T06:56:33.971Z",
+ "counts": {
+  "spirits": 621,
+  "skills": 579,
+  "spiritSkills": 20146,
+  "learners": 12805,
+  "types": 18,
+  "matchups": 324,
+  "teams": 12,
+  "glossary": 54
+ },
+ "origin": "https://roco.world",
+ "types": [
+  {
+   "id": 2,
+   "name": "普通系",
+   "short": "普通",
+   "color": "#CEF7FF",
+   "immunities": [],
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_type/0001_2_ui_icon_species_02_png.webp",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_type_0001_2_ui_icon_species_02_png.webp"
+  },
+  {
+   "id": 3,
+   "name": "草系",
+   "short": "草",
+   "color": "#70ECA0",
+   "immunities": [
+    "寄生"
+   ],
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_type/0002_3_ui_icon_species_03_png.webp",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_type_0002_3_ui_icon_species_03_png.webp"
+  },
+  {
+   "id": 4,
+   "name": "火系",
+   "short": "火",
+   "color": "#FF7B7A",
+   "immunities": [
+    "灼烧"
+   ],
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_type/0003_4_ui_icon_species_04_png.webp",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_type_0003_4_ui_icon_species_04_png.webp"
+  },
+  {
+   "id": 5,
+   "name": "水系",
+   "short": "水",
+   "color": "#51BCFF",
+   "immunities": [],
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_type/0004_5_ui_icon_species_05_png.webp",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_type_0004_5_ui_icon_species_05_png.webp"
+  },
+  {
+   "id": 6,
+   "name": "光系",
+   "short": "光",
+   "color": "#FFE071",
+   "immunities": [],
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_type/0005_6_ui_icon_species_06_png.webp",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_type_0005_6_ui_icon_species_06_png.webp"
+  },
+  {
+   "id": 8,
+   "name": "地系",
+   "short": "地",
+   "color": "#FFBF7C",
+   "immunities": [],
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_type/0006_8_ui_icon_species_08_png.webp",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_type_0006_8_ui_icon_species_08_png.webp"
+  },
+  {
+   "id": 9,
+   "name": "冰系",
+   "short": "冰",
+   "color": "#52efff",
+   "immunities": [
+    "冻结"
+   ],
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_type/0007_9_ui_icon_species_09_png.webp",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_type_0007_9_ui_icon_species_09_png.webp"
+  },
+  {
+   "id": 10,
+   "name": "龙系",
+   "short": "龙",
+   "color": "#72309c",
+   "immunities": [],
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_type/0008_10_ui_icon_species_10_png.webp",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_type_0008_10_ui_icon_species_10_png.webp"
+  },
+  {
+   "id": 11,
+   "name": "电系",
+   "short": "电",
+   "color": "#fdc801",
+   "immunities": [
+    "引电"
+   ],
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_type/0009_11_ui_icon_species_11_png.webp",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_type_0009_11_ui_icon_species_11_png.webp"
+  },
+  {
+   "id": 12,
+   "name": "毒系",
+   "short": "毒",
+   "color": "#b91dfc",
+   "immunities": [
+    "中毒"
+   ],
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_type/0010_12_ui_icon_species_12_png.webp",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_type_0010_12_ui_icon_species_12_png.webp"
+  },
+  {
+   "id": 13,
+   "name": "虫系",
+   "short": "虫",
+   "color": "#D0FF7B",
+   "immunities": [],
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_type/0011_13_ui_icon_species_13_png.webp",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_type_0011_13_ui_icon_species_13_png.webp"
+  },
+  {
+   "id": 14,
+   "name": "武系",
+   "short": "武",
+   "color": "#994d35",
+   "immunities": [],
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_type/0012_14_ui_icon_species_14_png.webp",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_type_0012_14_ui_icon_species_14_png.webp"
+  },
+  {
+   "id": 15,
+   "name": "翼系",
+   "short": "翼",
+   "color": "#79FFE3",
+   "immunities": [],
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_type/0013_15_ui_icon_species_15_png.webp",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_type_0013_15_ui_icon_species_15_png.webp"
+  },
+  {
+   "id": 16,
+   "name": "萌系",
+   "short": "萌",
+   "color": "#ff5198",
+   "immunities": [],
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_type/0014_16_ui_icon_species_16_png.webp",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_type_0014_16_ui_icon_species_16_png.webp"
+  },
+  {
+   "id": 17,
+   "name": "幽系",
+   "short": "幽",
+   "color": "#7C80FF",
+   "immunities": [],
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_type/0015_17_ui_icon_species_17_png.webp",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_type_0015_17_ui_icon_species_17_png.webp"
+  },
+  {
+   "id": 18,
+   "name": "恶系",
+   "short": "恶",
+   "color": "#AA57FF",
+   "immunities": [],
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_type/0016_18_ui_icon_species_18_png.webp",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_type_0016_18_ui_icon_species_18_png.webp"
+  },
+  {
+   "id": 19,
+   "name": "机械系",
+   "short": "机械",
+   "color": "#85c8ef",
+   "immunities": [],
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_type/0017_19_ui_icon_species_19_png.webp",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_type_0017_19_ui_icon_species_19_png.webp"
+  },
+  {
+   "id": 20,
+   "name": "幻系",
+   "short": "幻",
+   "color": "#929feb",
+   "immunities": [],
+   "iconOnline": "https://roco.world/assets/f2bc7789ad9c/images/ui_icons/pet_type/0018_20_ui_icon_species_20_png.webp",
+   "icon": "assets/f2bc7789ad9c_images_ui_icons_pet_type_0018_20_ui_icon_species_20_png.webp"
+  }
+ ]
+}

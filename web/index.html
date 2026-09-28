@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>洛克王国：世界 图鉴浏览器</title>
+<meta name="description" content="洛克王国：世界 精灵图鉴 / 技能库 / 系别克制表 / 推荐队伍，离线可用的单页浏览版。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐾</text></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">🐾</span>
+    <span class="brand-name">洛克王国：世界 <b>图鉴浏览器</b></span>
+  </div>
+  <nav class="tabs" id="tabs">
+    <a href="#/spirits" data-tab="spirits">精灵图鉴</a>
+    <a href="#/skills" data-tab="skills">技能库</a>
+    <a href="#/types" data-tab="types">系别克制</a>
+    <a href="#/teams" data-tab="teams">推荐队伍</a>
+    <a href="#/glossary" data-tab="glossary">术语</a>
+  </nav>
+  <div class="topbar-right">
+    <input id="globalSearch" type="search" placeholder="全局搜索（按 / 聚焦）" autocomplete="off" spellcheck="false">
+    <button id="themeBtn" class="icon-btn" title="切换亮/暗色">◐</button>
+  </div>
+</header>
+
+<div id="searchSuggest" class="suggest" hidden></div>
+
+<main id="app" class="app">
+  <div class="loading">正在加载数据…</div>
+</main>
+
+<footer class="footer">
+  <span id="statLine">数据加载中…</span>
+  <span class="sep">·</span>
+  <span>数据来源 <a href="https://roco.world/zh/" target="_blank" rel="noopener">roco.world</a>（非官方站点，与腾讯无关联）</span>
+  <span class="sep">·</span>
+  <span>本页仅供个人查阅，离线可用</span>
+</footer>
+
+<div id="modal" class="modal" hidden>
+  <div class="modal-backdrop" data-close></div>
+  <div class="modal-panel" role="dialog" aria-modal="true">
+    <button class="modal-close icon-btn" data-close title="关闭（Esc）">✕</button>
+    <div id="modalBody" class="modal-body"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="data-bundle.js" onerror="window.__NO_BUNDLE__=true"></script>
+<script src="app.js"></script>
+</body>
+</html>

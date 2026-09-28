@@ -1,0 +1,33 @@
+# 统一换行符：仓库里一律用 LF。
+# 否则在 Windows 上 checkout 出 CRLF，会让 CI 里的 shell 脚本步骤和 yml 解析莫名失败。
+* text=auto eol=lf
+
+# 明确的文本类型
+*.md    text eol=lf
+*.mjs   text eol=lf
+*.js    text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.py    text eol=lf
+*.txt   text eol=lf
+
+# 二进制：Git 不要试图转换或做行尾处理
+*.webp  binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.zip   binary
+*.sqlite binary
+*.woff  binary
+*.woff2 binary
+
+# 自动生成的产物：合并冲突时不要用 diff 污染审查
+web/data-bundle.js    -diff
+web/data/*.json       -diff
+web/data/skill-learners.json -diff
+tools/workflow-snapshot/workflow-snapshot.json -diff
