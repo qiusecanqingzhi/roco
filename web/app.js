@@ -66,13 +66,15 @@ const STATE = {
   skillIconById: new Map(),
   typeByName: new Map(),
   effect: new Map(),
-  // 天分/资质/性格
-  nat: { spirit: '20:1', iv: 10, nature: '固执' },
+  // 天分/资质/性格：六维各自独立开关性格，最多 3 项可投入个体
+  // 这里留 null，等 index() 时用 defaultNat() 建 —— 它依赖的 STAT_ORDER 在文件
+  // 后面才定义，在这里直接调用会踩 TDZ（const 不提升）。
+  nat: null,
   // 默认用「岚鸟 用 扇风 打 奇丽花」—— 与官方说明页的算例一致，打开就能对照
   calc: {
     a: '20:1', b: '43:1',
     skillA: 7150060, skillB: null,
-    level: 60, ivA: 10, ivB: 10, natureA: 1, natureB: 1,
+    level: 60, ivA: 60, ivB: 0, natureA: 'neutral', natureB: 'neutral',
     // 与官方说明页算例同参数：(75 + 20) × (1 + 50%) = 142.5 -> 显示威力 356 -> 伤害 332
     flatAdd: 20, skillPct: 0.5, atkStage: 0, defStage: 0,
     powerMul: 1, finalMul: 1, hpA: 0, hpB: 0, sortByDamage: true,
@@ -113,6 +115,8 @@ function index(data) {
   // （matchups 是 [attacking_type_id, defending_type_id, effect] 三元组）
   STATE.typeByName = new Map(data.meta.types.map((t) => [t.name, t]));
   STATE.effect = new Map((data.matchups ?? []).map(([a, d, e]) => [`${a}:${d}`, e]));
+  // 性格/天分计算器的初始状态放在这里建：它依赖 STAT_ORDER 等文件后部定义的常量
+  STATE.nat ??= defaultNat('152:1');
 }
 
 /* ============================================================
@@ -577,21 +581,78 @@ const natureByName = new Map(NATURES.map(([n, up, down, desc]) => [n, { name: n,
   if (bad.length) console.warn('⚠ 性格数据校验失败:', bad.join('; '));
 })();
 
-/** 种族值 + 个体 + 性格 -> 实战面板值。性格：1 为无修正 */
-const panelStat = (base, iv = 10, nature = 1) =>
-  Math.round((Math.round(1.1 * (base + 3 * iv)) + 10) * nature) + 50;
+/* ============================================================
+   面板数值计算（按官方公式，已用实测数据验证）
+   ------------------------------------------------------------
+   面板A（物攻/魔攻/物防/魔防/速度）
+     真实数值 = round(种族值 × 1.1 + 个体值 × 0.55 + 10) × 性格 + 50
+   面板B（生命）
+     真实血量 = round(种族值 × 1.7 + 个体值 × 0.85 + 70) × 性格 + 100
+   个体值 = 天分 × 星级倍率（5★ 时 ×6，满 60）
+
+   ⚠ round 只作用于「种族值×系数 + 个体值×系数 + 常数」这一整块，
+     乘性格、加常数都在 round 外面。这个位置踩过两次坑（都差 1）：
+       - 把 round 放到乘性格之后 → 翼王速度算成 266，游戏实测 267
+       - 把 round 换成向下取整   → 水灵速度算成 201，游戏实测 214
+     两个实测点同时吻合的只有下面这个写法。
+
+   已验证的实测点：
+     翼王(速度种族125) 个体60 加速×1.2 → round(137.5+33+10)=181 → ×1.2=217 → 267 ✓
+     水灵(速度种族85)  个体60 加速×1.2 → round(93.5+33+10)=137  → ×1.2=164 → 214 ✓
+     水灵(物防种族94)  个体 0  中性×1.0 → round(103.4+10)=113    → 163 ✓
+     水灵(魔防种族132) 个体 0  中性×1.0 → round(145.2+10)=155    → 205 ✓
+   ============================================================ */
+const STAT_COEF = { hp: { base: 1.7, iv: 0.85, flat: 70, plus: 100 } };
+const STAT_NORMAL_COEF = { base: 1.1, iv: 0.55, flat: 10, plus: 50 };
+/** 性格系数：每项可单独设 up / down / neutral */
+const NATURE_MULT = { up: 1.2, down: 0.9, neutral: 1 };
+
+/** 单项面板值（可能带小数）*/
+function panelValue(stat, baseStat, iv = 0, nature = 'neutral') {
+  const c = STAT_COEF[stat] ?? STAT_NORMAL_COEF;
+  const inner = Math.round(baseStat * c.base + iv * c.iv + c.flat);
+  return inner * (NATURE_MULT[nature] ?? 1) + c.plus;
+}
+/** 面板值取整（游戏里显示整数）*/
+const panelInt = (stat, baseStat, iv = 0, nature = 'neutral') =>
+  Math.round(panelValue(stat, baseStat, iv, nature));
+
+const STAT_ORDER = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'];
+
+/** 天分/资质/性格的初始状态：六项各自 { iv, nature } */
+function defaultNat(spirit = '152:1') {
+  const stats = {};
+  for (const k of STAT_ORDER) stats[k] = { iv: 0, nature: 'neutral' };
+  // 与实测那组一致：速度加成、物攻削弱、速度投满 60
+  stats.spd = { iv: 60, nature: 'up' };
+  stats.patk = { iv: 0, nature: 'down' };
+  return { spirit, talent: 10, star: 5, stats };
+}
+
+/** 套用某个性格名：把它"增"的那项设为 up、"减"的那项设为 down，其余中性 */
+function applyNature(name) {
+  const nat = natureByName.get(name);
+  if (!nat) return;
+  for (const k of STAT_ORDER) {
+    STATE.nat.stats[k].nature = k === nat.up ? 'up' : k === nat.down ? 'down' : 'neutral';
+  }
+}
+
+/** 星级 -> 个体倍率（5★ 为 ×6，天分10 时满 60）*/
+const STAR_MULT = { 1: 1.2, 2: 2.4, 3: 3.6, 4: 4.8, 5: 6 };
+const ivOf = (talent, star) => Math.round(talent * (STAR_MULT[star] ?? 1));
+
+/** 兼容旧调用：按 0~60 的个体值 + 性格系数换算面板 */
+const panelStat = (base, iv = 0, natureMult = 1, stat = 'patk') =>
+  Math.round(panelValue(stat, base, iv, natureMult > 1 ? 'up' : natureMult < 1 ? 'down' : 'neutral'));
 
 /** 等级系数 */
 const levelCoef = (level) => (level * 45 / 100 + 10) / 41;
 
-/** 攻击方的某个能力值（物攻/魔攻/物防/魔防）*/
-function panelOf(sp, which, iv = 10, nature = 1) {
-  const BASE = {
-    patk: 'patk', satk: 'satk', pdef: 'pdef', sdef: 'sdef', hp: 'hp', spd: 'spd',
-  };
-  const base = sp.stats[BASE[which]] ?? 0;
-  if (which === 'hp') return sp.stats.hp;           // 血量不走这条公式
-  return panelStat(base, iv, nature);
+/** 某个能力值（物攻/魔攻/物防/魔防/速度）。血量也走独立公式 */
+function panelOf(sp, which, iv = 0, nature = 'neutral') {
+  const base = sp.stats[which] ?? 0;
+  return panelInt(which, base, iv, nature);
 }
 
 /**
@@ -624,12 +685,18 @@ function typeEffect(atkTypeId, defenderTypeIds) {
 
 /**
  * 计算一次攻击。返回每个乘区的中间值，页面按这个逐步展示。
- * opts: { level, iv, nature, flatAdd, skillPct, atkStage, defStage, powerMul, finalMul, targetHp, random }
+ * opts: {
+ *   level, flatAdd, skillPct, atkStage, defStage, powerMul, finalMul, targetHp, random,
+ *   atkIV, defIV,                    // 个体值 0~60（对应攻/防那一项）
+ *   atkNature, defNature,            // 'up' | 'down' | 'neutral'
+ * }
  */
 function calcDamage(atkSp, defSp, sk, opts = {}) {
   const level = opts.level ?? 60;
-  const iv = opts.iv ?? 10;
-  const nature = opts.nature ?? 1;
+  const atkIV = opts.atkIV ?? 0;
+  const defIV = opts.defIV ?? 0;
+  const atkNature = opts.atkNature ?? 'neutral';
+  const defNature = opts.defNature ?? 'neutral';
   const skillPct = opts.skillPct ?? 0;
   const flatAdd = opts.flatAdd ?? 0;
   const atkStage = opts.atkStage ?? 0;
@@ -644,8 +711,8 @@ function calcDamage(atkSp, defSp, sk, opts = {}) {
   const defKey = isPhysical ? 'pdef' : 'sdef';
 
   const basePower = sk?.dmgMax ?? 0;
-  const atkStat = panelOf(atkSp, atkKey, iv, nature);
-  const defStat = panelOf(defSp, defKey, iv, nature);
+  const atkStat = panelOf(atkSp, atkKey, atkIV, atkNature);
+  const defStat = panelOf(defSp, defKey, defIV, defNature);
 
   // 攻防等级：攻击提升和防御下降都在分子，攻击下降和防御提升都在分母
   const atkZone = ((1 + atkStage) / (1 + defStage)) || 1;
@@ -712,14 +779,14 @@ function calcSide(side, sp, otherSp) {
     return `<option value="${s.id}"${s.id === curSkillId ? ' selected' : ''}>${esc(s.name)}${s.cat ? ` · ${esc(s.cat)}` : ''}${s.dmgMax ? ` · 威力${s.dmgMax}` : ''}${tag ? ` · ${tag}` : ''}</option>`;
   }).join('');
 
-  const natureSel = (v) => [['1', '无性格'], ['1.1', '性格+'], ['0.9', '性格-']]
-    .map(([n, l]) => `<option value="${n}"${Number(n) === v ? ' selected' : ''}>${l}</option>`).join('');
+  const natureSel = (v) => [['neutral', '无性格'], ['up', '性格+'], ['down', '性格-']]
+    .map(([n, l]) => `<option value="${n}"${n === v ? ' selected' : ''}>${l}</option>`).join('');
 
   // 实时结果（这一侧打对面）
   let result = '';
   if (curSkill) {
     const r = calcDamage(sp, otherSp, curSkill, {
-      level: c.level, iv, nature,
+      level: c.level, atkIV: iv, defIV: iv, atkNature: nature, defNature: nature,
       flatAdd: c.flatAdd, skillPct: c.skillPct,
       atkStage: c.atkStage, defStage: c.defStage,
       powerMul: c.powerMul, finalMul: c.finalMul,
@@ -727,6 +794,8 @@ function calcSide(side, sp, otherSp) {
     });
     result = calcResultBlock(side, sp, otherSp, curSkill, r);
   }
+  // 这一侧参与计算的那一项（物攻或魔攻）
+  const atkKey = (curSkill?.cat ?? '') === '魔法' ? 'satk' : 'patk';
 
   return `
   <div class="calc-side">
@@ -744,13 +813,15 @@ function calcSide(side, sp, otherSp) {
     <div class="calc-stats">
       ${STAT_KEYS.map(({ stat, label }) => {
         const base = sp.stats[stat] ?? 0;
-        const val = stat === 'hp' ? base : panelStat(base, iv, nature);
+        // 只有"这一侧参与计算的那一项"吃个体/性格，其余按中性显示，避免误导
+        const useNat = stat === atkKey ? nature : 'neutral';
+        const val = panelInt(stat, base, stat === atkKey ? iv : 0, useNat);
         return `<span class="cs" title="种族值 ${base}"><b>${label}</b>${val}</span>`;
       }).join('')}
     </div>
 
     <div class="calc-row">
-      <label>个体 <input type="number" id="civ-${side}" min="0" max="31" value="${iv}" data-calc="iv" data-side="${side}"></label>
+      <label>个体 <input type="number" id="civ-${side}" min="0" max="60" value="${iv}" data-calc="iv" data-side="${side}"></label>
       <label>性格 <select id="cnat-${side}" data-calc="nature" data-side="${side}">${natureSel(nature)}</select></label>
       <label>当前血量 <input type="number" id="chp-${side}" min="0" value="${hp || ''}" placeholder="${sp.stats.hp}" data-calc="hp" data-side="${side}"></label>
     </div>
@@ -806,7 +877,7 @@ function viewCalc() {
   if (c.sortByDamage) {
     const list = usableSkillsOf(a)
       .filter((s) => (s.dmgMax ?? 0) > 0 && s.cat !== '状态')
-      .map((s) => ({ s, r: calcDamage(a, b, s, { level: c.level, iv: c.ivA, nature: c.natureA, targetHp: c.hpB || b.stats.hp }) }))
+      .map((s) => ({ s, r: calcDamage(a, b, s, { level: c.level, atkIV: c.ivA, atkNature: c.natureA, targetHp: c.hpB || b.stats.hp }) }))
       .sort((x, y) => y.r.dmg - x.r.dmg)
       .slice(0, 12);
     rankBlock = `<div class="section"><h3>${esc(a.name)} 打 ${esc(b.name)}：伤害最高的技能 <span class="n">前 ${list.length}</span></h3>
@@ -867,68 +938,68 @@ function viewCalc() {
 }
 
 /* ============================================================
-   视图：天分 / 资质 / 性格
+   视图：天分 · 资质 · 性格（自由加点）
+   ------------------------------------------------------------
+   照游戏内面板的形态做：
+     · 六项属性各一行：图标 | 面板值 | 进度条 | [性格+ 性格− 个体]
+     · 性格是【每项独立开关】：up ×1.2 / down ×0.9 / neutral ×1.0
+     · 个体最多 3 项可投入，每项 0~60 自由分配（不必三项相同）
+     · 星级 1~5★ 影响个体上限（天分 × 星级倍率）
    ============================================================ */
-const IV_LIST = [0, 7, 8, 9, 10];      // 与官方计算器一致的个体档
 
-/** 六维面板：个体全用同一个值，性格按名称取修正 */
-function panelStats6(sp, iv, natureName) {
-  const nat = natureByName.get(natureName);
-  const out = {};
-  for (const k of Object.keys(STAT_LABEL6)) {
-    const base = sp.stats[k] ?? 0;
-    const mult = !nat ? 1 : nat.up === k ? 1.1 : nat.down === k ? 0.9 : 1;
-    out[k] = {
-      base,
-      neutral: panelStat(base, iv, 1),
-      value: panelStat(base, iv, mult),
-      mult,
-    };
-  }
-  return out;
+/** 一行属性的控件与数值 */
+function natalRow(sp, stat) {
+  const c = STATE.nat;
+  const st = c.stats[stat];
+  const base = sp.stats[stat] ?? 0;
+  const max = c.star ? ivOf(10, c.star) : 60;      // 该项个体上限
+  const value = panelInt(stat, base, st.iv, st.nature);
+  const neutralV = panelInt(stat, base, st.iv, 'neutral');
+  const pct = Math.min(100, (value / (STAT_MAX?.[stat] ?? 200)) * 100);
+
+  const btn = (kind, label, cls) => {
+    const on = st.nature === kind;
+    return `<button class="nat-btn ${cls}${on ? ' on' : ''}" data-nat-btn="${stat}" data-nat-kind="${kind}">${label}</button>`;
+  };
+
+  // 个体：数字输入 + 是否"已投入"（最多 3 项）
+  const investedCount = STAT_ORDER.filter((k) => c.stats[k].iv > 0).length;
+  const canEdit = st.iv > 0 || investedCount < 3;
+  const delta = value - neutralV;
+
+  return `<div class="nat-line">
+    <span class="nat-ic-wrap">${stateIcon(stat)}</span>
+    <span class="nat-name">${STAT_LABEL6[stat]}</span>
+    <span class="nat-val">${value}</span>
+    <span class="nat-bar"><i class="s-${stat}" style="width:${pct}%"></i></span>
+    <span class="nat-ctl">
+      ${btn('up', '性格+', 'up')}
+      ${btn('down', '性格-', 'down')}
+      <span class="nat-iv">
+        个体
+        <input type="number" id="niv-${stat}" min="0" max="${max}" value="${st.iv}"
+               data-nat-iv="${stat}" ${canEdit ? '' : 'disabled title="最多只能投入 3 项，请先清空一项"'}>
+        <span class="nat-iv-max">/${max}</span>
+      </span>
+    </span>
+    <span class="nat-delta">${delta > 0 ? '+' + delta : delta < 0 ? delta : ''}</span>
+  </div>`;
 }
 
 function viewNature() {
   const c = STATE.nat;
   const sp = STATE.bySpirit.get(c.spirit) ?? STATE.data.spirits[0];
-  const panel = panelStats6(sp, c.iv, c.nature);
-  const nat = natureByName.get(c.nature);
-  const tier = talentOf(c.iv);
+  const iv = ivOf(c.talent, c.star);
+  const invested = STAT_ORDER.filter((k) => c.stats[k].iv > 0);
 
-  const cell = (k) => {
-    const p = panel[k];
-    const d = p.value - p.neutral;
-    const mark = p.mult > 1 ? '<span class="nv-up">▲</span>' : p.mult < 1 ? '<span class="nv-down">▼</span>' : '';
-    const delta = d === 0 ? '<span class="desc">—</span>'
-      : `<b class="${d > 0 ? 'nv-pos' : 'nv-neg'}">${d > 0 ? '+' : ''}${d}</b>`;
-    return `<tr>
-      <td><span class="k">${STAT_LABEL6[k]}</span></td>
-      <td class="mid">${stateIcon(k)}</td>
-      <td class="num">${p.base}</td>
-      <td class="num">${p.neutral}</td>
-      <td class="num">${p.value}</td>
-      <td class="num">${mark}</td>
-      <td class="num">${delta}</td>
-    </tr>`;
-  };
-
-  // 各属性「最优性格」——按该属性最高面板值找，多个并列都列出
-  const best = {};
-  for (const k of Object.keys(STAT_LABEL6)) {
-    let top = -1;
-    for (const [n, up] of NATURES.map((x) => [x[0], x[1]])) {
-      if (up !== k) continue;                       // 只考虑「增」这一项是该属性的性格
-      const v = panelStat(sp.stats[k] ?? 0, c.iv, 1.1);
-      if (v > top) top = v;
-    }
-    const names = NATURES.filter((x) => x[1] === k).map((x) => `${x[0]}（减${STAT_LABEL6[x[2]]}）`);
-    best[k] = { value: top, names };
-  }
+  const upList = STAT_ORDER.filter((k) => c.stats[k].nature === 'up').map((k) => STAT_LABEL6[k]);
+  const downList = STAT_ORDER.filter((k) => c.stats[k].nature === 'down').map((k) => STAT_LABEL6[k]);
+  const totalIv = invested.reduce((a, k) => a + c.stats[k].iv, 0);
 
   return `
   <div class="page-head">
     <h1>天分 · 资质 · 性格</h1>
-    <span class="sub">性格提升 1 项、降低 1 项（±10%，含生命）；同一天分下初始个体资质仍不同，个体 10 为最佳</span>
+    <span class="sub">六维各行可独立开关性格加成/削弱；最多 3 项可投入个体，每项 0~60 自由分配</span>
   </div>
 
   <div class="natal-panel">
@@ -936,64 +1007,77 @@ function viewNature() {
       <label>精灵
         <select id="nat-spirit" class="natal-sel">${spiritOptions(c.spirit)}</select>
       </label>
-      <label>个体资质
-        <select id="nat-iv" class="natal-sel">${IV_LIST.map((v) => `<option value="${v}"${v === c.iv ? ' selected' : ''}>${v}${v === 10 ? '（最佳）' : ''}</option>`).join('')}</select>
-      </label>
-      <label>性格
-        <select id="nat-nature" class="natal-sel">
-          <option value=""${c.nature === '' ? ' selected' : ''}>无性格（不修正）</option>
-          ${NATURES.map(([n, up, down]) => `<option value="${n}"${n === c.nature ? ' selected' : ''}>${n}（${STAT_LABEL6[up]}▲ ${STAT_LABEL6[down]}▼）</option>`).join('')}
+      <label>天分
+        <select id="nat-talent" class="natal-sel">
+          ${Array.from({ length: 11 }, (_, v) => `<option value="${v}"${v === c.talent ? ' selected' : ''}>${v}${v === 10 ? '（最高）' : ''}</option>`).join('')}
         </select>
       </label>
+      <label>星级
+        <select id="nat-star" class="natal-sel">
+          ${[1, 2, 3, 4, 5].map((s) => `<option value="${s}"${s === c.star ? ' selected' : ''}>${s}★${s === 5 ? '（个体上限 ' + ivOf(10, 5) + '）' : ''}</option>`).join('')}
+        </select>
+      </label>
+      <button class="chip" id="nat-reset">清空加点</button>
     </div>
 
     <div class="talent-box">
       <div class="tb-main">
-        <span class="k">天分档位</span>
-        <b class="tier tier-${tier.rank}">${tier.label}</b>
-        <span class="desc">${tier.desc}</span>
+        <span class="k">个体值</span>
+        <b>${iv}</b>
+        <span class="desc">= 天分 ${c.talent} × ${STAR_MULT[c.star]}（${c.star}★）　·　单项投入 0~${iv}</span>
       </div>
       <div class="desc" style="margin-top:6px;font-size:12px">
-        按个体资质 ${c.iv} 推断。实际游戏里同一天分档内初始个体仍会不同，
-        所以「了不起的天分」也要看个体是否到 10；个体不足可用【能力钥匙】+1，
-        天分档位本身可用【适格钥匙】重新激活。
+        每只精灵最多把个体投在 <b>3 项</b>属性上，三项可以不同（比如 60/55/48）。
+        修改任一项后按回车或点到别处即生效。
       </div>
     </div>
 
-    <div class="table-wrap"><table>
-      <thead><tr>
-        <th>属性</th><th class="mid">图标</th><th class="num">种族值</th>
-        <th class="num">无性格</th><th class="num">当前性格</th><th class="num"></th><th class="num">变化</th>
-      </tr></thead>
-      <tbody>${Object.keys(STAT_LABEL6).map(cell).join('')}</tbody>
-    </table></div>
+    <div class="nat-lines">${STAT_ORDER.map((k) => natalRow(sp, k)).join('')}</div>
 
-    ${nat ? `<div class="natal-note">
-      当前性格「<b>${nat.name}</b>」：<span class="nv-up">${STAT_LABEL6[nat.up]} ▲</span> ×1.1　
-      <span class="nv-down">${STAT_LABEL6[nat.down]} ▼</span> ×0.9
-      <div class="desc" style="margin-top:4px">${esc(nat.desc)}</div>
-    </div>` : '<div class="natal-note">未选性格，六维不修正。<span class="desc">选一个性格即可看到面板变化。</span></div>'}
-  </div>
-
-  <div class="section"><h3>各属性最优性格 <span class="n">个体 ${c.iv}</span></h3>
-    <div class="table-wrap"><table>
-      <thead><tr><th>想提升</th><th class="num">面板值</th><th>可选性格（会降低的那项也要考虑）</th></tr></thead>
-      <tbody>${Object.entries(best).map(([k, v]) => `
-        <tr><td><b>${STAT_LABEL6[k]}</b></td><td class="num">${v.value}</td>
-        <td class="natal-names">${v.names.map((n) => `<span class="pill">${esc(n)}</span>`).join('')}</td></tr>`).join('')}
-      </tbody>
-    </table></div>
-    <div class="desc" style="margin-top:6px;font-size:12px">
-      只列「增」这一项是该属性的性格；配套的「减」项已在括号里标出，按精灵定位取舍
-      （输出手一般宁可减某项防御，也不要减速度）。
+    <div class="natal-note">
+      已投入 <b>${invested.length}</b> 项（最多 3 项）${invested.length ? '：' + invested.map((k) => `${STAT_LABEL6[k]} ${c.stats[k].iv}`).join('、') : ''}
+      ${totalIv ? `　合计 ${totalIv}` : ''}
+      <div class="desc" style="margin-top:4px">
+        性格：${upList.length ? upList.map((n) => `<span class="nv-up">${n} ▲</span>`).join('、') : '无加成'}　
+        ${downList.length ? downList.map((n) => `<span class="nv-down">${n} ▼</span>`).join('、') : '无削弱'}
+        <span class="desc">（加成 ×${NATURE_MULT.up}，削弱 ×${NATURE_MULT.down}）</span>
+      </div>
     </div>
   </div>
 
-  <div class="section"><h3>全部 30 种性格</h3>
+  <div class="section"><h3>六维对照 <span class="n">种族值 → 无性格 → 当前配置</span></h3>
     <div class="table-wrap"><table>
-      <thead><tr><th>性格</th><th class="mid">增加</th><th class="mid">减少</th><th>性格描述</th></tr></thead>
+      <thead><tr><th>属性</th><th class="num">种族值</th><th class="num">个体</th>
+        <th class="num">无加成</th><th class="num">当前</th><th class="num">差值</th><th>性格</th></tr></thead>
+      <tbody>${STAT_ORDER.map((k) => {
+        const st = c.stats[k];
+        const base = sp.stats[k] ?? 0;
+        const cur = panelInt(k, base, st.iv, st.nature);
+        const neu = panelInt(k, base, st.iv, 'neutral');
+        const d = cur - neu;
+        return `<tr>
+          <td><b>${STAT_LABEL6[k]}</b></td>
+          <td class="num">${base}</td>
+          <td class="num">${st.iv}</td>
+          <td class="num">${neu}</td>
+          <td class="num"><b>${cur}</b></td>
+          <td class="num">${d ? `<b class="${d > 0 ? 'nv-pos' : 'nv-neg'}">${d > 0 ? '+' : ''}${d}</b>` : '—'}</td>
+          <td>${st.nature === 'up' ? '<span class="nv-up">加成 ×' + NATURE_MULT.up + '</span>' : st.nature === 'down' ? '<span class="nv-down">削弱 ×' + NATURE_MULT.down + '</span>' : '<span class="desc">中性</span>'}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>
+    <div class="desc" style="margin-top:8px;font-size:12px">
+      公式：<code>面板A（物攻/魔攻/物防/魔防/速度）= round(种族值 × 1.1 + 个体值 × 0.55 + 10) × 性格 + 50</code><br>
+      <code>面板B（生命）= round(种族值 × 1.7 + 个体值 × 0.85 + 70) × 性格 + 100</code><br>
+      已用实测校验：翼王(速度种族125) 个体60 加成×1.2 → 267；水灵(速度85) 个体60 → 214、(物防94) → 163、(魔防132) → 205。
+    </div>
+  </div>
+
+  <div class="section"><h3>一键套用性格 <span class="n">30 种，点击即设好"哪项加、哪项减"</span></h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>性格</th><th class="mid">加成</th><th class="mid">削弱</th><th>性格描述</th></tr></thead>
       <tbody>${NATURES.map(([n, up, down, desc]) => `
-        <tr class="clickable" data-nat-pick="${esc(n)}">
+        <tr class="clickable" data-nat-apply="${esc(n)}">
           <td><b>${esc(n)}</b></td>
           <td class="mid"><span class="nv-up">${STAT_LABEL6[up]} ▲</span></td>
           <td class="mid"><span class="nv-down">${STAT_LABEL6[down]} ▼</span></td>
@@ -1454,13 +1538,65 @@ function bindView() {
     }
   }
 
-  // 天分/资质/性格：改精灵/个体/性格即时重算
+  // 天分/资质/性格：精灵/天分/星级 + 每项性格开关 + 每项个体投入
   if ($('#nat-spirit')) {
     $('#nat-spirit').addEventListener('change', (e) => { STATE.nat.spirit = e.target.value; render(); });
-    $('#nat-iv').addEventListener('change', (e) => { STATE.nat.iv = Number(e.target.value); render(); });
-    $('#nat-nature').addEventListener('change', (e) => { STATE.nat.nature = e.target.value; render(); });
-    for (const tr of document.querySelectorAll('[data-nat-pick]')) {
-      tr.addEventListener('click', () => { STATE.nat.nature = tr.dataset.natPick; render(); });
+    $('#nat-talent').addEventListener('change', (e) => {
+      STATE.nat.talent = Number(e.target.value);
+      // 天分变了，个体上限也变；把超出的投入夹回上限
+      const cap = ivOf(STATE.nat.talent, STATE.nat.star);
+      for (const k of STAT_ORDER) {
+        const st = STATE.nat.stats[k];
+        if (typeof st.iv === 'number' && st.iv > cap) st.iv = cap;
+      }
+      render();
+    });
+    $('#nat-star').addEventListener('change', (e) => {
+      STATE.nat.star = Number(e.target.value);
+      const cap = ivOf(STATE.nat.talent, STATE.nat.star);
+      for (const k of STAT_ORDER) {
+        const st = STATE.nat.stats[k];
+        if (typeof st.iv === 'number' && st.iv > cap) st.iv = cap;
+      }
+      render();
+    });
+    $('#nat-reset').addEventListener('click', () => {
+      const keep = STATE.nat.spirit;
+      STATE.nat = defaultNat(keep);
+      for (const k of STAT_ORDER) STATE.nat.stats[k].iv = 0;
+      render();
+    });
+
+    // 性格开关（每项独立，可同时多项加成/削弱）
+    for (const btn of document.querySelectorAll('[data-nat-btn]')) {
+      btn.addEventListener('click', () => {
+        const k = btn.dataset.natBtn;
+        const kind = btn.dataset.natKind;
+        const st = STATE.nat.stats[k];
+        st.nature = st.nature === kind ? 'neutral' : kind;   // 再点一次取消
+        render();
+      });
+    }
+    // 个体投入：由输入框失焦/回车时提交（避免每敲一位就重画、丢焦点）
+    for (const inp of document.querySelectorAll('[data-nat-iv]')) {
+      const commit = () => {
+        const k = inp.dataset.natIv;
+        const cap = ivOf(STATE.nat.talent, STATE.nat.star);
+        let v = Number(inp.value);
+        if (!Number.isFinite(v)) v = 0;
+        v = Math.max(0, Math.min(cap, Math.round(v)));
+        // 最多 3 项：如果这项原本是 0、且已有 3 项非 0，则拒绝
+        const others = STAT_ORDER.filter((x) => x !== k && STATE.nat.stats[x].iv > 0).length;
+        if (v > 0 && others >= 3) { toast('最多只能投入 3 项，请先清空一项'); v = 0; }
+        STATE.nat.stats[k].iv = v;
+        render();
+      };
+      inp.addEventListener('change', commit);
+      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); } });
+    }
+    // 一键套用性格
+    for (const tr of document.querySelectorAll('[data-nat-apply]')) {
+      tr.addEventListener('click', () => { applyNature(tr.dataset.natApply); render(); });
     }
   }
 
@@ -1637,7 +1773,7 @@ $('#themeBtn').addEventListener('click', () => {
     window.__roco = {
       STATE, filterSpirits, filterSkills, spiritSkillsOf, learnersOf, spiritDetail, skillDetail,
       glossaryDetail, render, index, calcDamage, panelStat, levelCoef, typeEffect, usableSkillsOf,
-      NATURES, talentOf, natureByName, panelStats6,
+      NATURES, talentOf, natureByName, panelValue, panelInt, ivOf, defaultNat, applyNature, stateIcon,
     };
   } catch (err) {
     $('#app').innerHTML = `

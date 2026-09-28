@@ -424,6 +424,43 @@ table.matrix td {
   -webkit-mask-position: center; mask-position: center;
 }
 
+/* 六维逐行控件（照游戏内面板：图标 | 名称 | 数值 | 进度条 | 性格开关 | 个体） */
+.nat-lines { display: grid; gap: 8px; margin: 12px 0; }
+.nat-line {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: var(--bg-soft); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px;
+}
+.nat-ic-wrap { flex: 0 0 auto; display: flex; }
+.nat-name { flex: 0 0 46px; font-size: 13px; color: var(--text-dim); }
+.nat-val { flex: 0 0 56px; font-size: 17px; font-weight: 700; color: var(--accent); text-align: right; }
+.nat-bar {
+  flex: 1 1 160px; min-width: 120px; height: 12px;
+  background: var(--card-hi); border-radius: 6px; overflow: hidden;
+}
+.nat-bar i { display: block; height: 100%; border-radius: 6px; background: var(--accent); }
+.nat-ctl { display: flex; align-items: center; gap: 5px; margin-left: auto; }
+.nat-btn {
+  font-size: 12px; padding: 3px 9px; border-radius: 7px; cursor: pointer;
+  background: var(--card); color: var(--text-dim); border: 1px solid var(--line);
+}
+.nat-btn.up.on { background: #2f7d4a; color: #fff; border-color: #2f7d4a; font-weight: 700; }
+.nat-btn.down.on { background: #8d3b34; color: #fff; border-color: #8d3b34; font-weight: 700; }
+.nat-btn:hover { border-color: var(--accent); }
+.nat-iv { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-dim); }
+.nat-iv input {
+  width: 58px; padding: 3px 6px; text-align: right;
+  background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 7px;
+}
+.nat-iv input:disabled { opacity: .45; }
+.nat-iv-max { color: var(--text-faint); font-size: 11px; }
+.nat-delta { flex: 0 0 34px; text-align: right; font-size: 12px; font-weight: 600; color: var(--text-faint); }
+.nat-line:has(.nat-btn.up.on) .nat-delta { color: #4fc06d; }
+@media (max-width: 720px) {
+  .nat-val { flex: 0 0 46px; font-size: 15px; }
+  .nat-ctl { margin-left: 0; width: 100%; }
+  .nat-bar { flex: 1 1 100%; }
+}
+
 /* ------------------------------------------------------ 术语 */
 .glossary { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
 .gitem { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }

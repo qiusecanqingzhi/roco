@@ -253,8 +253,11 @@ ok(lan.stats.patk === 128, `岚鸟物攻种族 128（实际 ${lan.stats.patk}）
 ok(qi.stats.pdef === 121, `奇丽花物防种族 121（实际 ${qi.stats.pdef}）`);
 ok(shanfeng.dmgMax === 75, `扇风基础威力 75（实际 ${shanfeng.dmgMax}）`);
 
-ok(api.panelStat(128, 10, 1) === 234, `物攻面板 128/个体10 -> 234（实际 ${api.panelStat(128, 10, 1)}）`);
-ok(api.panelStat(121, 10, 1) === 226, `物防面板 121/个体10 -> 226（实际 ${api.panelStat(121, 10, 1)}）`);
+// 面板换算（新公式，个体取值 0~60）：
+//   round(128 × 1.1 + 60 × 0.55 + 10) = round(183.8) = 184 → +50 = 234
+//   round(121 × 1.1 + 60 × 0.55 + 10) = round(176.1) = 176 → +50 = 226
+ok(api.panelInt('patk', 128, 60, 'neutral') === 234, `物攻 种族128 个体60 -> 234（实际 ${api.panelInt('patk', 128, 60, 'neutral')}）`);
+ok(api.panelInt('pdef', 121, 60, 'neutral') === 226, `物防 种族121 个体60 -> 226（实际 ${api.panelInt('pdef', 121, 60, 'neutral')}）`);
 ok(Math.abs(api.levelCoef(60) - 37 / 41) < 1e-12, `等级系数 60 级 = 37/41（实际 ${api.levelCoef(60)}）`);
 
 // 克制倍率（官方 effect_values：1=克制×2 / 0=普通×1 / -1=抵抗×0.5）
@@ -268,18 +271,19 @@ ok(api.typeEffect(tid('水系'), [tid('火系')]) === 2, `水系打火系 ×2（
 ok(api.typeEffect(tid('火系'), [tid('草系'), tid('水系')]) === 1, '打「草+水」双系：×2 × ×0.5 = ×1');
 
 // 完整公式：复现参考页的 332
-const ref = api.calcDamage(lan, qi, shanfeng, { level: 60, iv: 10, nature: 1, flatAdd: 20, skillPct: 0.5, targetHp: 411 });
+// 个体值用 60（= 参考页面板 234/226 对应的那组）
+const ref = api.calcDamage(lan, qi, shanfeng, { level: 60, atkIV: 60, defIV: 60, flatAdd: 20, skillPct: 0.5, targetHp: 411 });
 ok(ref.effective === 142.5, `① 有效威力 (75+20)×1.5 = 142.5（实际 ${ref.effective}）`);
 ok(ref.shown === 356, `② 显示威力 round(142.5×1.25×2) = 356（实际 ${ref.shown}）`);
 ok(ref.dmg === 332, `④ 预计伤害 = 332（实际 ${ref.dmg}）`);
 ok(ref.hits === 2, `打 411 血需要 2 下（实际 ${ref.hits}）`);
 
-const plain = api.calcDamage(lan, qi, shanfeng, { level: 60, iv: 10 });
+const plain = api.calcDamage(lan, qi, shanfeng, { level: 60, atkIV: 0, defIV: 0 });
 ok(plain.effective === 75, `无加成时有效威力 = 基础威力 75（实际 ${plain.effective}）`);
 ok(plain.stab === 1.25, '同系技能吃到本系 ×1.25');
 const otherSkill = A2.data.skills.find((s) => s.name === '拍击');
 if (otherSkill) {
-  const r2 = api.calcDamage(lan, qi, otherSkill, { level: 60, iv: 10 });
+  const r2 = api.calcDamage(lan, qi, otherSkill, { level: 60, atkIV: 0, defIV: 0 });
   ok(r2.stab === 1, `非本系技能不吃本系加成（${otherSkill.type}，实际 ${r2.stab}）`);
 }
 const statusSkill = A2.data.skills.find((s) => s.cat === '状态');
@@ -372,45 +376,56 @@ ok(byName.get('固执').up === 'patk' && byName.get('固执').down === 'satk', '
 ok(byName.get('胆小').up === 'spd' && byName.get('胆小').down === 'patk', '胆小 = 速度▲ 物攻▼');
 ok(byName.get('逞强').up === 'patk' && byName.get('逞强').down === 'hp', '逞强 = 物攻▲ 生命▼（本作生命也受性格影响）');
 
-// ±10% 修正：性格乘在公式内部的 round((…+10) × 性格) 那一步，不是乘在最终面板上。
-// 物攻种族 128 个体 10：基础 round(1.1×158)=174
-//   无性格 round((174+10)×1)+50 = 234
-//   +10%   round((174+10)×1.1)+50 = round(202.4)+50 = 252
-//   -10%   round((174+10)×0.9)+50 = round(165.6)+50 = 216
-ok(api.panelStat(128, 10, 1) === 234, `无性格 物攻面板 234（实际 ${api.panelStat(128, 10, 1)}）`);
-ok(api.panelStat(128, 10, 1.1) === 252, `+10% -> 252（实际 ${api.panelStat(128, 10, 1.1)}）`);
-ok(api.panelStat(128, 10, 0.9) === 216, `-10% -> 216（实际 ${api.panelStat(128, 10, 0.9)}）`);
-// 参考页把 128/个体10 显示为 234，且下拉框能把它变成其它值，说明性格参与在内层 round
-ok(api.panelStat(128, 10, 1.1) > api.panelStat(128, 10, 1), '+10% 面板高于无性格');
-ok(api.panelStat(128, 10, 0.9) < api.panelStat(128, 10, 1), '-10% 面板低于无性格');
+// ±10% 修正：性格乘在 round(…) 之后，round 只作用于「种族值×1.1 + 个体×0.55 + 10」
+// 实测校验（来自用户游戏内数据）：
+//   翼王(速度种族125) 个体60 加成×1.2 → round(137.5+33+10)=181 → ×1.2=217 → 267
+//   水灵(速度种族85)  个体60 加成×1.2 → round(93.5+33+10)=137  → ×1.2=164 → 214
+//   水灵(物防种族94)  个体0  中性×1.0 → round(103.4+10)=113    → 163
+//   水灵(魔防种族132) 个体0  中性×1.0 → round(145.2+10)=155    → 205
+ok(api.panelInt('spd', 125, 60, 'up') === 267, `翼王速度 267（实际 ${api.panelInt('spd', 125, 60, 'up')}）—— 游戏实测值`);
+ok(api.panelInt('spd', 85, 60, 'up') === 214, `水灵速度 214（实际 ${api.panelInt('spd', 85, 60, 'up')}）—— 游戏实测值`);
+ok(api.panelInt('pdef', 94, 0, 'neutral') === 163, `水灵物防 163（实际 ${api.panelInt('pdef', 94, 0, 'neutral')}）`);
+ok(api.panelInt('sdef', 132, 0, 'neutral') === 205, `水灵魔防 205（实际 ${api.panelInt('sdef', 132, 0, 'neutral')}）`);
+ok(api.panelInt('hp', 125, 60, 'neutral') === 434, `水灵生命 434（实际 ${api.panelInt('hp', 125, 60, 'neutral')}）—— 生命走独立公式`);
+ok(api.panelInt('satk', 127, 60, 'neutral') === 233, `水灵魔攻 233（实际 ${api.panelInt('satk', 127, 60, 'neutral')}）`);
+// 加成/中性/削弱三档
+ok(api.panelInt('spd', 125, 60, 'up') > api.panelInt('spd', 125, 60, 'neutral'), '加成 > 中性');
+ok(api.panelInt('spd', 125, 60, 'neutral') > api.panelInt('spd', 125, 60, 'down'), '中性 > 削弱');
+// 星级/天分 -> 个体
+ok(api.ivOf(10, 5) === 60, `天分10 5★ -> 个体 60（实际 ${api.ivOf(10, 5)}）`);
+ok(api.ivOf(10, 1) === 12, `天分10 1★ -> 个体 12（实际 ${api.ivOf(10, 1)}）`);
+ok(api.ivOf(0, 5) === 0, '天分0 -> 个体 0');
+// 套用性格
+api.applyNature('胆小');
+ok(A2.nat.stats.spd.nature === 'up' && A2.nat.stats.patk.nature === 'down', '套用「胆小」-> 速度加成、物攻削弱');
+ok(A2.nat.stats.satk.nature === 'neutral', '未被该性格涉及的项保持中性');
 
 // 天分档位由个体推断
 ok(api.talentOf(10).label === '了不起的天分', `个体 10 -> 了不起的天分（实际 ${api.talentOf(10).label}）`);
 ok(api.talentOf(0).rank < api.talentOf(10).rank, '低个体档位低于满个体');
 
-// 页面渲染
-A2.nat = { spirit: '20:1', iv: 10, nature: '固执' };
+// 页面渲染（新结构：六项各自 { iv, nature }）
+A2.nat = api.defaultNat('152:1');
 A2.view = 'nature';
 ids.get('app').innerHTML = '';
 api.render();
 const natHtml = ids.get('app').innerHTML;
 ok(/天分 · 资质 · 性格/.test(natHtml), '渲染出性格页');
-ok(/了不起的天分/.test(natHtml), '显示天分档位');
-ok(/固执/.test(natHtml), '显示当前性格');
-ok(/物攻 ▲/.test(natHtml) && /魔攻 ▼/.test(natHtml), '标出性格的增/减项');
-ok(/252/.test(natHtml), '算出固执下的物攻面板 252');
-ok((natHtml.match(/class="natal-ic"/g) || []).length >= 6, '六维都有图标');
-ok(/各属性最优性格/.test(natHtml), '有「各属性最优性格」推荐');
-ok(/全部 30 种性格/.test(natHtml), '有完整性格表');
-ok((natHtml.match(/data-nat-pick=/g) || []).length === 30, `性格表 30 行（实际 ${(natHtml.match(/data-nat-pick=/g) || []).length}）`);
+ok(/个体值/.test(natHtml), '显示个体值');
+ok(/速度/.test(natHtml) && /物攻/.test(natHtml), '六维都有行');
+ok(/267/.test(natHtml), '算出翼王速度 267（与游戏实测一致）');
+ok((natHtml.match(/data-nat-btn="/g) || []).length === 12, `每项两个性格开关，共 12 个（实际 ${(natHtml.match(/data-nat-btn="/g) || []).length}）`);
+ok((natHtml.match(/data-nat-iv="/g) || []).length === 6, `六项各一个个体输入（实际 ${(natHtml.match(/data-nat-iv="/g) || []).length}）`);
+ok((natHtml.match(/data-nat-apply="/g) || []).length === 30, `性格套用表 30 行（实际 ${(natHtml.match(/data-nat-apply="/g) || []).length}）`);
+ok(/data-nat-kind="up"/.test(natHtml) && /data-nat-kind="down"/.test(natHtml), '同时有"性格+"与"性格-"开关');
 
 // 无性格时不修正
-A2.nat.nature = '';
+A2.nat = api.defaultNat('152:1');
+for (const k of ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd']) A2.nat.stats[k].nature = 'neutral';
 api.render();
 const neutralHtml = ids.get('app').innerHTML;
-ok(/未选性格/.test(neutralHtml), '无性格时给出不修正提示');
-ok(!/固执/.test(neutralHtml) || /无性格（不修正）/.test(neutralHtml), '无性格时不再标注性格增减');
-ok(/无性格/.test(neutralHtml), '「无性格」选项存在且为当前项');
+ok(/无加成/.test(neutralHtml), '全中性时提示「无加成」');
+ok(/231/.test(neutralHtml), '翼王速度中性与加成分开显示（中性 231）');
 // source_type=legendary 的技能只有 7 只精灵有，早先模板没渲染这一桶、被静默丢弃。
 /* ---------------------------------------------------------- 传说技能 */
 // source_type=legendary 只有 7 只精灵有，早先模板没渲染这一桶、被静默丢弃。
