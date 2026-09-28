@@ -863,8 +863,11 @@ $('#themeBtn').addEventListener('click', () => {
     const data = await loadData();
     index(data);
     const c = data.meta.counts;
+    // 只展示数据版本号（上游的 catalog_version）—— 它是"数据是否更新"的唯一可靠标志。
+    // 不再显示生成时间：那个值每次构建都不同，会让产物永远"有变化"，
+    // 导致 CI 每次都提交一个空改动（见 export-data.mjs 里的说明）。
     $('#statLine').textContent =
-      `数据版本 ${data.meta.catalogVersion} · ${data.meta.locale} · 更新于 ${new Date(data.meta.generatedAt).toLocaleString('zh-CN')}`;
+      `数据版本 ${data.meta.catalogVersion} · ${data.meta.locale}`;
     $('#app').innerHTML = '';
     route();
     console.log('[roco] 数据就绪', c);

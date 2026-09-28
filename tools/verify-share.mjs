@@ -44,12 +44,18 @@ const httpGet = (p) => new Promise((resolve) => {
   req.on('error', (e) => resolve({ error: e.message }));
   req.setTimeout(8000, () => { req.destroy(new Error('超时')); });
 });
-for (const p of ['/', '/app.js', '/style.css', '/data/meta.json', '/data/spirit-skills.json', '/assets/' + (assets[0] ?? '')]) {
-  const r = await httpGet(p);
-  if (r.error) ok(false, `GET ${p} 失败: ${r.error}（服务器没起？）`);
-  else ok(r.status === 200, `GET ${p} -> ${r.status}`);
+const first = await httpGet('/');
+if (first.error) {
+  console.log(`  － 跳过：127.0.0.1:${port} 上没有服务器（${first.error}）`);
+  console.log(`     想连这组一起测就先起一个：`);
+  console.log(`     python -m http.server ${port} --bind 127.0.0.1 --directory .`);
+} else {
+  for (const p of ['/', '/app.js', '/style.css', '/data/meta.json', '/data/spirit-skills.json', '/assets/' + (assets[0] ?? '')]) {
+    const r = await httpGet(p);
+    if (r.error) ok(false, `GET ${p} 失败: ${r.error}`);
+    else ok(r.status === 200, `GET ${p} -> ${r.status}`);
+  }
 }
-
 /* ---------------- 2) DOM 桩执行包里的 app.js ---------------- */
 console.log('\n· 离线渲染（模拟双击 index.html）');
 function el() {

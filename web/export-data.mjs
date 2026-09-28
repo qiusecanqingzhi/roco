@@ -216,10 +216,14 @@ const glossary = rows('SELECT * FROM glossary WHERE locale = ? ORDER BY note_id'
 db.close();
 
 /* ---------------------------------------------------------------- 写出 */
+// 注意：这里【不能】放 generatedAt 这类每次都变的时间戳。
+// 否则 meta.json 与 data-bundle.js 永远"有变化"，CI 每次运行都会提交一个
+// 空改动并重新发布一次。实测踩过：连续两次运行的差异只有时间戳。
+// 网页要显示"数据版本"用 catalogVersion 就够了 —— 那是上游给的版本号，
+// 只有它的变化才代表数据真的更新了。
 const meta = {
   locale: L,
   catalogVersion: manifest.catalog_version,
-  generatedAt: new Date().toISOString(),
   counts: {
     spirits: spirits.length, skills: skills.length, spiritSkills: ssRows.length,
     learners: learnerRows.length, types: types.length, matchups: matchups.length,
