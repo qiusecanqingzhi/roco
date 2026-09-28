@@ -66,16 +66,16 @@ ok((svg.match(/class="radar-dot/g) || []).length === 6, '六个数据顶点');
 
 console.log('\n· 外侧标签（图标 + 数值）');
 // 顺序必须与原站一致：正上方顺时针 生命 → 魔攻 → 魔防 → 速度 → 物防 → 物攻
-// 数值现在按官方面板公式算（详情页可加点），果实立方人默认"个体0/中性"时：
-//   生命 349 / 魔攻 115 / 魔防 168 / 速度 165 / 物防 192 / 物攻 205
-// 只校验"顺序"（用种族值排序反推顺序），不把具体数值写死 —— 公式改了不用改测试。
+// 数值按官方面板公式算；详情页【默认投前三项（生命/物攻/魔攻）满 60，其余 0】，
+// 所以这里的期望值要按同样的默认个体算，不能一律用 60（否则 3 项限制就没体现）。
 const EXPECT_LABELS = ['生命', '魔攻', '魔防', '速度', '物防', '物攻'];
-// 果实立方人（默认个体0/中性）的六维面板值，后面几段都要用
 const sp466 = api.STATE.bySpirit.get('466:1');
 const PANEL_KEYS = ['hp', 'satk', 'sdef', 'spd', 'pdef', 'patk'];
-const hpVal = api.panelInt('hp', sp466.stats.hp, 0, 'neutral');
-const patkVal = api.panelInt('patk', sp466.stats.patk, 0, 'neutral');
-const satkVal = api.panelInt('satk', sp466.stats.satk, 0, 'neutral');
+// 详情页默认个体：前三项 60，其余 0（顺序同 STAT_ORDER）
+const DEF_IV_OF = (k) => (['hp', 'patk', 'satk'].includes(k) ? 60 : 0);
+const hpVal = api.panelInt('hp', sp466.stats.hp, DEF_IV_OF('hp'), 'neutral');
+const patkVal = api.panelInt('patk', sp466.stats.patk, DEF_IV_OF('patk'), 'neutral');
+const satkVal = api.panelInt('satk', sp466.stats.satk, DEF_IV_OF('satk'), 'neutral');
 const HP_SCALE = 450;      // 生命参考上限（按全库分布定）
 const hasIcons = /class="radar-icon"/.test(svg);
 if (hasIcons) {
@@ -85,7 +85,7 @@ if (hasIcons) {
   const vals = [...svg.matchAll(/class="radar-val"[^>]*>(\d+)</g)].map((m) => Number(m[1]));
   ok(vals.length === 6, `六个数值文字（实际 ${vals.length}）`);
   // 顺序校验：把种族值按同样的顺序算成面板值，逐一对比
-  const expectVals = PANEL_KEYS.map((k) => api.panelInt(k, sp466.stats[k], 0, 'neutral'));
+  const expectVals = PANEL_KEYS.map((k) => api.panelInt(k, sp466.stats[k], DEF_IV_OF(k), 'neutral'));
   ok(vals.join(',') === expectVals.join(','),
     `数值顺序与原站一致：${vals.join(',')}（期望 ${expectVals.join(',')}）`);
   // 染色比例跟随数值
@@ -449,9 +449,15 @@ ok(box.querySelectorAll('[data-nat-iv]').length === 6, '六项各一个个体输
 const maxes = [...box.querySelectorAll('[data-nat-iv]')].map((i) => i.getAttribute('max'));
 ok(maxes.length === 6 && maxes.every((m) => m === '60'), `六个输入框上限都是 60（实际 ${maxes.join(',')}）`);
 
-// 默认：个体 0、中性 —— 且面板与独立页面用两套状态，互不影响
+// 默认：前三项（生命/物攻/魔攻）个体满 60、其余 0；性格全中性
+// —— 面板与独立页面用两套状态，互不影响
 const wc = api.spiritCalcOf(api.STATE.bySpirit.get('152:1'));
-ok(wc.stats.spd.iv === 0 && wc.stats.spd.nature === 'neutral', '详情面板默认个体 0 / 中性（不预设加点）');
+ok(wc.stats.hp.iv === 60 && wc.stats.patk.iv === 60 && wc.stats.satk.iv === 60,
+  `默认前三项满 60（实际 ${wc.stats.hp.iv}/${wc.stats.patk.iv}/${wc.stats.satk.iv}）`);
+ok(wc.stats.pdef.iv === 0 && wc.stats.sdef.iv === 0 && wc.stats.spd.iv === 0,
+  `默认后三项为 0（实际 ${wc.stats.pdef.iv}/${wc.stats.sdef.iv}/${wc.stats.spd.iv}）`);
+ok(Object.values(wc.stats).filter((x) => x.iv > 0).length === 3, '默认正好投了 3 项（符合游戏规则）');
+ok(Object.values(wc.stats).every((x) => x.nature === 'neutral'), '默认性格全中性');
 // 隔离性：先把独立页面的状态记下来，改完详情面板后它必须原样不变
 const natSnapshot = JSON.stringify(api.STATE.nat.stats);
 ok(JSON.stringify(api.STATE.nat.stats) === natSnapshot, '独立「性格·天分」页状态此刻有一份快照');
@@ -474,43 +480,46 @@ ok(wc.stats.spd.nature === 'neutral', '再点一次取消加成');
 
 // 填个体：输入 60 后提交，面板值要涨
 const box3 = ids.get('modalBody')._el.querySelector('#natalBlock');
+// 默认速度是 0（只投了前三项），给它投 60 应该成功
 const ivInput = box3.querySelector('[data-nat-iv="spd"]');
 ok(!!ivInput, '取到速度的个体输入框');
-const beforeIv = api.calcStatsOf(api.STATE.bySpirit.get('152:1'), wc).spd;
-ivInput.value = '60';
-ivInput.dispatch('change');
-ok(wc.stats.spd.iv === 60, `提交后个体变成 60（实际 ${wc.stats.spd.iv}）`);
-const afterIv = api.calcStatsOf(api.STATE.bySpirit.get('152:1'), wc).spd;
-ok(afterIv > beforeIv, `投满个体后速度从 ${beforeIv} 升到 ${afterIv}`);
-
-// 最多 3 项：再投第 4 项应被拦下
-const box4 = ids.get('modalBody')._el.querySelector('#natalBlock');
-let invested = 0;
-for (const k of ['hp', 'patk', 'satk', 'pdef']) {
-  const inp = box4.querySelector(`[data-nat-iv="${k}"]`);
-  if (!inp || inp.disabled) continue;
+ok(wc.stats.spd.iv === 0, '速度默认是 0（默认只投前三项）');
+{
+  // 先把生命清掉，腾出一项名额
+  const hpInp = ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('[data-nat-iv="hp"]');
+  hpInp.value = '0';
+  hpInp.dispatch('change');
+  ok(wc.stats.hp.iv === 0, '把生命清 0 后腾出名额');
+  const inp = ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('[data-nat-iv="spd"]');
   inp.value = '60';
   inp.dispatch('change');
-  invested = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].filter((x) => wc.stats[x].iv > 0).length;
-  break;
+  ok(wc.stats.spd.iv === 60, `给速度投 60 成功（实际 ${wc.stats.spd.iv}）`);
 }
+// 输入越界要夹回 0~60
 {
-  const box5 = ids.get('modalBody')._el.querySelector('#natalBlock');
-  // 逐个尝试投满，最终投入项数不应超过 3
-  for (const k of ['hp', 'patk', 'satk', 'pdef', 'sdef']) {
-    const inp = box5.querySelector(`[data-nat-iv="${k}"]`);
-    if (!inp) continue;
-    inp.value = '60';
-    inp.dispatch('change');
-  }
-  const count = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].filter((x) => wc.stats[x].iv > 0).length;
-  ok(count <= 3, `个体投入项数不超过 3（实际 ${count}）`);
+  const inp = ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('[data-nat-iv="spd"]');
+  inp.value = '999';
+  inp.dispatch('change');
+  ok(wc.stats.spd.iv === 60, `输入 999 被夹到上限 60（实际 ${wc.stats.spd.iv}）`);
 }
-
-// 清空
-ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('#dnat-reset').click();
-const cleared = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].filter((x) => wc.stats[x].iv > 0).length;
-ok(cleared === 0, `点「清空」后投入项数为 0（实际 ${cleared}）`);
+// 「最多 3 项」必须保留：已经投满 3 项时，第 4 项会被拒（回到 0）
+{
+  const filled = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].filter((x) => wc.stats[x].iv > 0);
+  ok(filled.length === 3, `当前正好投了 3 项（${filled.join(',')}）`);
+  const free = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].find((x) => wc.stats[x].iv === 0);
+  const inp = ids.get('modalBody')._el.querySelector('#natalBlock').querySelector(`[data-nat-iv="${free}"]`);
+  ok(!!inp, `找到没投的那项 ${free}`);
+  inp.value = '60';
+  inp.dispatch('change');
+  const count = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].filter((x) => wc.stats[x].iv > 0).length;
+  ok(count === 3, `投第 4 项被拦下，仍只有 3 项（实际 ${count}）`);
+}
+// 清空 = 回到默认（前三项 60），不是全零
+{
+  ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('#dnat-reset').click();
+  const ivs = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].map((x) => wc.stats[x].iv);
+  ok(ivs.join(',') === '60,60,60,0,0,0', `「清空」回到默认 60,60,60,0,0,0（实际 ${ivs.join(',')}）`);
+}
 
 // 隔离性：以上所有操作都改的是"详情面板"的状态，独立页面那份必须没被动过
 ok(JSON.stringify(api.STATE.nat.stats) === natSnapshot,

@@ -139,14 +139,17 @@ function index(data) {
  * 不复用 STATE.nat —— 否则弹窗里改加点会串到「性格 · 天分」页面上。
  * 详情页的个体上限固定 60（不区分天分/星级）：面板值已经把基础数值含进去了，
  * 再选星级会让人以为"星级影响面板"，所以只保留个体投入与性格开关。
+ * 个体【默认就有 3 项是满 60】：实际练起来的精灵基本都把可投的项投满了，
+ * 默认全 0 只会让人每次都要手填。但不能六项都给 60（游戏只允许投 3 项），
+ * 所以默认取前三项（生命 / 物攻 / 魔攻）为 60，其余 0 —— 想换哪三项自己改。
+ * "最多 3 项"的限制保留（这是游戏规则，工具要挡住，否则会算出游戏里不存在的面板）。
  */
 function spiritCalcOf(sp) {
   const key = `${sp.id}:${sp.formId}`;
   STATE.spiritCalc ??= new Map();
   if (!STATE.spiritCalc.has(key)) {
     const c = defaultNat(key);
-    // 详情页默认不预设加点/性格，避免"看起来像官方数据"
-    for (const k of STAT_ORDER) c.stats[k] = { iv: 0, nature: 'neutral' };
+    STAT_ORDER.forEach((k, i) => { c.stats[k] = { iv: i < 3 ? IV_MAX : 0, nature: 'neutral' }; });
     STATE.spiritCalc.set(key, c);
   }
   return STATE.spiritCalc.get(key);
@@ -186,7 +189,9 @@ function statBreakdown(stat, baseStat, iv, nature) {
 function natalBlock(sp, c) {
   const vals = calcStatsOf(sp, c);
   const cap = IV_MAX;
+  // 「最多 3 项」是游戏规则，要保留 —— 否则会算出游戏里不存在的面板
   const invested = STAT_ORDER.filter((k) => c.stats[k].iv > 0).length;
+  const canInvestMore = invested < 3;
 
   const bars = STAT_ORDER.map((k) => {
     const st = c.stats[k];
@@ -211,7 +216,6 @@ function natalBlock(sp, c) {
   const controls = STAT_ORDER.map((k) => {
     const st = c.stats[k];
     const b = statBreakdown(k, sp.stats[k] ?? 0, st.iv, st.nature);
-    const canEdit = st.iv > 0 || invested < 3;
     const btn = (kind, label) => `<button class="nat-btn ${kind}${st.nature === kind ? ' on' : ''}"
       data-nat-btn="${k}" data-nat-kind="${kind}">${label}</button>`;
     const denom = STAT_MAX[k] ?? 250;
@@ -242,7 +246,9 @@ function natalBlock(sp, c) {
         ${btn('up', '性格+')}${btn('down', '性格−')}
         <span class="nat-iv"><span class="nat-iv-k">个体</span>
           <input type="number" id="dniv-${k}" min="0" max="${cap}" value="${st.iv}"
-                 data-nat-iv="${k}" data-in-modal="1" ${canEdit ? '' : 'disabled'} aria-label="${STAT_LABEL6[k]}个体值">
+                 data-nat-iv="${k}" data-in-modal="1"
+                 ${st.iv > 0 || canInvestMore ? '' : 'disabled title="最多只能投入 3 项，请先清空一项"'}
+                 aria-label="${STAT_LABEL6[k]}个体值">
           <span class="nat-iv-max">/${cap}</span></span>
       </span>
 
@@ -260,7 +266,7 @@ function natalBlock(sp, c) {
       <div class="stat-bars">${bars}</div>
     </div>
     <div class="natal-toolbar">
-      <span class="desc">个体上限 <b>${IV_MAX}</b>　已投入 ${invested}/3 项</span>
+      <span class="desc">个体上限 <b>${IV_MAX}</b>　已投入 <b>${invested}/3</b> 项</span>
       <span class="desc">（面板值已含基础数值，所以不再需要天分/星级）</span>
       <button class="chip" id="dnat-reset">清空</button>
     </div>
@@ -1904,21 +1910,24 @@ function bindNatalBlock() {
       redrawNatalBlock(key);
     });
   }
-  // 详情页不设天分/星级（面板值已含基础数值，个体上限固定 60），所以没有 clampIv 那套
+  // 详情页不设天分/星级（面板值已含基础数值，个体上限固定 60），所以没有 clampIv 那套。
+  // 「清空」= 回到默认（前三项 60、其余 0），不是全清零 —— 全零不是常态
   box.querySelector('#dnat-reset')?.addEventListener('click', () => {
-    for (const k of STAT_ORDER) c.stats[k] = { iv: 0, nature: 'neutral' };
+    STAT_ORDER.forEach((k, i) => { c.stats[k] = { iv: i < 3 ? IV_MAX : 0, nature: 'neutral' }; });
     redrawNatalBlock(key);
   });
-  // 个体投入：失焦/回车提交，最多 3 项
+  // 个体投入：失焦/回车提交。保留「最多 3 项」的游戏规则
   for (const inp of box.querySelectorAll('[data-nat-iv]')) {
     const commit = () => {
       const k = inp.dataset.natIv;
-      const cap = IV_MAX;
       let v = Number(inp.value);
       if (!Number.isFinite(v)) v = 0;
-      v = Math.max(0, Math.min(cap, Math.round(v)));
+      v = Math.max(0, Math.min(IV_MAX, Math.round(v)));
       const others = STAT_ORDER.filter((x) => x !== k && c.stats[x].iv > 0).length;
-      if (v > 0 && others >= 3) { toast('最多只能投入 3 项，请先清空一项'); v = 0; }
+      if (v > 0 && others >= 3) {
+        toast('最多只能投入 3 项，请先清空一项');
+        v = 0;
+      }
       c.stats[k].iv = v;
       redrawNatalBlock(key);
     };
