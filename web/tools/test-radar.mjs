@@ -469,6 +469,81 @@ ok(rankDmg[0] >= 327, `最高伤害 ≥ 327（实际 ${rankDmg[0]}）`);
   ok(cfgA !== modalCfg, '两侧配置与详情页配置是不同对象');
 }
 
+/* ---------------------------------------------------------- 四技能槽 */
+console.log('\n· 四技能槽 + 伤害占比');
+{
+  // 干净起点：两侧加点清空（注意 iv 与 nature 都要清），A 选一个技能
+  A2.calc.a = '20:1'; A2.calc.b = '43:1'; A2.calc.skillA = 7150060;
+  A2.calc.loadA = [null, null, null, null]; A2.calc.powA = [null, null, null, null]; A2.calc.hitA = [1, 1, 1, 1];
+  A2.calc.loadB = [null, null, null, null]; A2.calc.powB = [null, null, null, null]; A2.calc.hitB = [1, 1, 1, 1];
+  for (const side of ['a', 'b']) {
+    const sp = A2.bySpirit.get(A2.calc[side]);
+    const c = api.withCalcSide(side, () => api.spiritCalcOf(sp));
+    for (const k of ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd']) c.stats[k] = { iv: 0, nature: 'neutral' };
+  }
+  A2.view = 'calc';
+  ids.get('app').innerHTML = '';
+  api.render();
+
+  const appL = () => ids.get('app')._el;
+  ok(appL().querySelectorAll('.calc-loadout').length === 2, '两侧各有一个四技能槽区块');
+  const loA = () => appL().querySelector('.calc-loadout[data-loadout="a"]');
+  ok(loA().querySelectorAll('.lo-table tbody tr').length === 4, '每侧四行（四个技能槽）');
+  ok(loA().querySelectorAll('tr.lo-empty').length === 4, '初始四个槽都是空的');
+
+  // 点排序表一行 -> 放进 A 侧第一个空位
+  const pickRow = appL().querySelector('[data-calc-pick]');
+  const pickId = Number(pickRow.dataset.calcPick);
+  pickRow.click();
+  ok(A2.calc.loadA[0] === pickId, `点排序表一行 -> 放进 A 侧槽 1（实际 ${A2.calc.loadA[0]}）`);
+  const loA2 = () => appL().querySelector('.calc-loadout[data-loadout="a"]');
+  ok(loA2().querySelectorAll('tr[data-lo-row]').length === 1, '槽 1 已填上，其余仍是空位');
+  ok(/≈|%/.test(loA2().innerHTML) || /%/.test(loA2().innerHTML), '显示了伤害占比（%）');
+  ok(/class="lo-bar"/.test(loA2().innerHTML) && /style="width:/.test(loA2().innerHTML),
+    '有占比进度条（lo-bar + 宽度内联样式）');
+
+  // 伤害口径：技能槽 = 含全局加成（flatAdd / skillPct）的那一份
+  const skL = A2.bySkill.get(pickId);
+  const aL = A2.bySpirit.get(A2.calc.a);
+  const bL = A2.bySpirit.get(A2.calc.b);
+  const cfgAL = api.withCalcSide('a', () => api.spiritCalcOf(aL));
+  const expect = api.withCalcSide('b', () => api.spiritCalcOf(bL));
+  const ak = (skL.cat ?? '') === '魔法' ? 'satk' : 'patk';
+  const dk = ak === 'satk' ? 'sdef' : 'pdef';
+  const want = api.calcDamage(aL, bL, skL, {
+    level: A2.calc.level, atkIV: cfgAL.stats[ak].iv, atkNature: cfgAL.stats[ak].nature,
+    defIV: expect.stats[dk].iv, defNature: expect.stats[dk].nature,
+    power: skL.dmgMax, flatAdd: A2.calc.flatAdd, skillPct: A2.calc.skillPct,
+  }).dmg;
+  const shownDmg = Number((loA2().querySelector('.lo-dmg').innerHTML.match(/<b>(\d+)<\/b>/) || [])[1]);
+  ok(shownDmg === want, `槽里的伤害 = 含全局加成的手算值（界面 ${shownDmg} / 期望 ${want}）`);
+
+  // 威力覆盖真的参与计算
+  const powEl = appL().querySelector('[data-lo-pow="a:0"]');
+  ok(Number(powEl.value) === skL.dmgMax, `威力输入框默认是技能自带威力（${powEl.value}）`);
+  powEl.value = String(Math.round(skL.dmgMax / 2));
+  powEl.dispatch('change');
+  const halfDmg = Number((appL().querySelector('[data-loadout="a"] .lo-dmg').innerHTML.match(/<b>(\d+)<\/b>/) || [])[1]);
+  ok(halfDmg < shownDmg, `威力减半 -> 伤害下降（${shownDmg} -> ${halfDmg}）`);
+
+  // 连击：总伤害翻倍，并显示 ×N 击
+  const hitEl = appL().querySelector('[data-lo-hit="a:0"]');
+  hitEl.value = '2';
+  hitEl.dispatch('change');
+  const hitCell = appL().querySelector('[data-loadout="a"] .lo-dmg');
+  const hitDmg = Number((hitCell.innerHTML.match(/<b>(\d+)<\/b>/) || [])[1]);
+  ok(hitDmg === halfDmg * 2, `连击 2 -> 总伤害翻倍（${halfDmg} -> ${hitDmg}）`);
+  ok(/×2/.test(hitCell.innerHTML), '标注了 ×2 击');
+
+  // 占比：只有一个技能时是 100%
+  ok(/100\.0%/.test(hitCell.innerHTML), '单招时占比 100.0%');
+
+  // 移除
+  appL().querySelector('[data-lo-del="a:0"]').click();
+  ok(A2.calc.loadA[0] === null, '点「×」能把技能移出槽位');
+  ok(appL().querySelectorAll('.calc-loadout[data-loadout="a"] tr.lo-empty').length === 4, '移除后四个槽都空了');
+}
+
 /* ---------------------------------------------------------- 性格 · 天分 */
 // 性格表源自 BiliWiki：30 种，每种 +1 项 / -1 项，每项属性当"增""减"各 5 次。
 // 修正系数 ±10%，且本作生命也受性格影响（与宝可梦不同）。

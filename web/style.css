@@ -557,6 +557,39 @@ table.matrix td {
   .stat-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+/* 四技能槽（伤害计算页下方，两侧并排） */
+.calc-loadouts {
+  display: grid; gap: 14px; margin-top: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+}
+.calc-loadout { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.calc-loadout .lo-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.calc-loadout .lo-head h3 { margin: 0; font-size: 14px; }
+.calc-loadout .lo-head h3 .n { color: var(--text-faint); font-weight: 500; font-size: 12px; margin-left: 4px; }
+table.lo-table { font-size: 12px; }
+table.lo-table th { font-size: 11px; color: var(--text-faint); font-weight: 500; }
+table.lo-table td { padding: 6px 8px; vertical-align: middle; }
+table.lo-table tr.lo-empty td { color: var(--text-faint); text-align: center; }
+table.lo-table .lo-pow, table.lo-table .lo-hit {
+  width: 64px; text-align: center; font-variant-numeric: tabular-nums;
+}
+table.lo-table .lo-pow { font-weight: 600; }
+table.lo-table .lo-hit { width: 52px; }
+table.lo-table .lo-del {
+  width: 22px; height: 22px; line-height: 1; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 5px;
+  background: var(--card); color: var(--text-faint);
+}
+table.lo-table .lo-del:hover { border-color: #c05a4a; color: #c05a4a; }
+table.lo-table .lo-dmg { min-width: 130px; }
+table.lo-table .lo-dmg b { font-size: 14px; }
+table.lo-table .lo-bar {
+  display: block; height: 6px; margin-top: 4px; border-radius: 3px;
+  background: var(--card-hi); overflow: hidden;
+}
+table.lo-table .lo-bar > i { display: block; height: 100%; background: var(--accent); }
+table.lo-table .lo-pct { font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
 /* ------------------------------------------------------ 术语 */
 .glossary { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
 .gitem { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }

@@ -78,6 +78,14 @@ const STATE = {
   calc: {
     a: '20:1', b: '43:1',
     skillA: 7150060, skillB: null,
+    // 四技能槽（参考图那一栏）：每侧四个位置，空位为 null。
+    // 与 skillA/skillB 是两套东西 —— 后者是"这一次出哪一招"（单技能计算），
+    // 这里是一整套配置，用来算各招的伤害占比。点击会互相带入。
+    loadA: [null, null, null, null],
+    loadB: [null, null, null, null],
+    // 每招的覆盖值：威力（null=用技能本身的基础威力）、连击（默认 1）
+    powA: [null, null, null, null], powB: [null, null, null, null],
+    hitA: [1, 1, 1, 1], hitB: [1, 1, 1, 1],
     level: 60,
     // 与官方说明页算例同参数：(75 + 20) × (1 + 50%) = 142.5 -> 显示威力 356 -> 伤害 332
     flatAdd: 20, skillPct: 0.5, atkStage: 0, defStage: 0,
@@ -911,7 +919,9 @@ function calcDamage(atkSp, defSp, sk, opts = {}) {
   const atkKey = isPhysical ? 'patk' : 'satk';
   const defKey = isPhysical ? 'pdef' : 'sdef';
 
-  const basePower = sk?.dmgMax ?? 0;
+  // 基础威力：opts.power 允许覆盖（四技能槽里可以把某一招的威力改成别的值，
+  // 比如把固定伤害技按实际威力填）。不传就用技能自身的基础威力 damage[0]。
+  const basePower = opts.power ?? sk?.dmgMax ?? 0;
   const atkStat = panelOf(atkSp, atkKey, atkIV, atkNature);
   const defStat = panelOf(defSp, defKey, defIV, defNature);
 
@@ -1062,6 +1072,108 @@ function bindStatCards() {
       });
     }
   }
+}
+
+/** 把一个技能放进某一侧四技能槽的第一个空位（已被占则覆盖最后一个） */
+function pushLoadout(side, skillId) {
+  const load = side === 'a' ? STATE.calc.loadA : STATE.calc.loadB;
+  if (load.includes(skillId)) return;
+  const empty = load.indexOf(null);
+  load[empty >= 0 ? empty : load.length - 1] = skillId;
+}
+
+/**
+ * 算出一侧四技能槽每一招的伤害与合计。
+ * 与 calcDamage 同一套参数（等级 / 个体 / 性格 / 各类乘区），只是逐槽算一遍。
+ */
+function loadoutDamage(side, sp, otherSp, atkKey, defKey) {
+  const c = STATE.calc;
+  const load = side === 'a' ? c.loadA : c.loadB;
+  const pows = side === 'a' ? c.powA : c.powB;
+  const hits = side === 'a' ? c.hitA : c.hitB;
+  const cfg = withCalcSide(side, () => spiritCalcOf(sp));
+  const otherSide = side === 'a' ? 'b' : 'a';
+  const targetHp = otherSide === 'a' ? (c.hpA || otherSp.stats.hp) : (c.hpB || otherSp.stats.hp);
+  const defIV = withCalcSide(otherSide, () => spiritCalcOf(otherSp).stats[defKey]?.iv ?? 0);
+  const defNature = withCalcSide(otherSide, () => spiritCalcOf(otherSp).stats[defKey]?.nature ?? 'neutral');
+  const rows = [];
+  let sum = 0;
+  load.forEach((sid, i) => {
+    const sk = sid ? STATE.bySkill.get(sid) : null;
+    if (!sk) { rows.push({ i, sk: null, pow: 0, hit: 1, dmg: 0, total: 0 }); return; }
+    const pow = pows[i] != null ? pows[i] : (sk.dmgMax ?? 0);
+    const hit = hits[i] ?? 1;
+    let dmg = 0;
+    if (atkKey && defKey && pow > 0) {
+      dmg = calcDamage(sp, otherSp, sk, {
+        level: c.level,
+        atkIV: cfg.stats[atkKey].iv, atkNature: cfg.stats[atkKey].nature,
+        defIV, defNature,
+        // 威力用槽里的值（可被用户改过），不是技能自带的基础威力
+        power: pow,
+        flatAdd: c.flatAdd, skillPct: c.skillPct,
+        atkStage: c.atkStage, defStage: c.defStage,
+        powerMul: c.powerMul, finalMul: c.finalMul,
+        targetHp,
+      }).dmg;
+    }
+    const total = dmg * hit;
+    sum += total;
+    rows.push({ i, sk, pow, hit, dmg, total });
+  });
+  return { rows, sum };
+}
+
+/**
+ * 四技能槽 + 伤害占比（参考图那一栏）。
+ * 每行：序号 / 图标 / 名字 / 属性 / 耗能 / 威力（可改）/ 连击（可改）/ 移除 / 总伤害 + 占比条。
+ * 耗能与威力取自技能数据；连击数据里没有，默认 1，可手动改。
+ */
+function skillLoadout(side, sp, otherSp, atkKey, defKey) {
+  const { rows, sum } = loadoutDamage(side, sp, otherSp, atkKey, defKey);
+
+  const body = rows.map(({ i, sk, pow, hit, dmg, total }) => {
+    if (!sk) {
+      return `<tr class="lo-empty"><td class="mid">${i + 1}</td>
+        <td colspan="9" class="desc">空位 —— 点下面「伤害最高的技能」里的一行放进来</td></tr>`;
+    }
+    const pct = sum > 0 ? (total / sum) * 100 : 0;
+    return `<tr data-lo-row="${side}:${i}">
+      <td class="mid">${i + 1}</td>
+      <td class="mid">${skillIconTag(sk.id)}</td>
+      <td class="skill-name">${esc(sk.name)}</td>
+      <td class="mid">${sk.typeId ? badge(sk.typeId) : ''}</td>
+      <td class="mid">${sk.energy ?? '—'}</td>
+      <td class="mid"><input type="number" class="lo-pow" min="0" max="999" value="${pow}"
+        data-lo-pow="${side}:${i}" aria-label="威力"></td>
+      <td class="mid"><input type="number" class="lo-hit" min="1" max="9" value="${hit}"
+        data-lo-hit="${side}:${i}" aria-label="连击"></td>
+      <td class="mid"><button type="button" class="lo-del" data-lo-del="${side}:${i}"
+        title="移出这个技能">×</button></td>
+      <td class="num lo-dmg">
+        ${total > 0
+          ? `<b>${total}</b>${hit > 1 ? `<span class="desc">（${dmg}×${hit}）</span>` : ''}
+             <span class="lo-bar"><i style="width:${pct.toFixed(1)}%"></i></span>
+             <span class="lo-pct">${pct.toFixed(1)}%</span>`
+          : '<span class="desc">—</span>'}
+      </td>
+    </tr>`;
+  }).join('');
+
+  return `<div class="calc-loadout" data-loadout="${side}">
+    <div class="lo-head">
+      <h3>四技能槽 <span class="n">${esc(sp.name)}</span></h3>
+      <span class="desc">改威力 / 连击会立刻重算${sum > 0 ? `　合计 <b>${sum}</b>` : ''}　（含上方的固定加威力 ${STATE.calc.flatAdd} 与本次技能威力 ${(STATE.calc.skillPct * 100).toFixed(0)}%；下方排序表是不含这两项的裸威力值）</span>
+    </div>
+    <div class="table-wrap"><table class="lo-table">
+      <thead><tr>
+        <th class="mid">#</th><th class="mid">图标</th><th>技能</th><th class="mid">属性</th>
+        <th class="mid">耗能</th><th class="mid">威力</th><th class="mid">连击</th><th class="mid">移除</th>
+        <th class="num">总伤害 / 占比</th>
+      </tr></thead>
+      <tbody>${body}</tbody>
+    </table></div>
+  </div>`;
 }
 
 /** 一侧的面板 + 技能选择。加点用与详情页同一套组件（个体按钮 + 性格逐项开关）
@@ -1261,6 +1373,12 @@ function viewCalc() {
         ${calcSide('b', b, a, { atkKey: bAtk, defKey: aDef })}
       </div>
     </div>
+
+    <div class="calc-loadouts">
+      ${skillLoadout('a', a, b, aAtk, bDef)}
+      ${skillLoadout('b', b, a, bAtk, aDef)}
+    </div>
+
     <div class="desc" style="margin-top:10px;font-size:12px">
       说明：① 有效威力 = (基础威力 + 固定加威力) × (1 + 本次技能威力%)；
       ② 显示威力 = round(有效威力 × 本系 × 克制 × 攻防等级 × 威力乘区)；
@@ -1739,9 +1857,40 @@ function bindView() {
         render();
       });
     }
-    // 伤害排序表里点一行 = 用那个技能
+    // 伤害排序表里点一行 = 用那个技能（同时放进 A 侧第一个空位）
     for (const tr of document.querySelectorAll('[data-calc-pick]')) {
-      tr.addEventListener('click', () => { STATE.calc.skillA = Number(tr.dataset.calcPick); render(); });
+      tr.addEventListener('click', () => {
+        const id = Number(tr.dataset.calcPick);
+        STATE.calc.skillA = id;
+        pushLoadout('a', id);
+        render();
+      });
+    }
+    // 四技能槽：改威力 / 连击
+    const loCommit = (el, arrName) => {
+      el.addEventListener('change', () => {
+        const [side, i] = el.dataset[arrName === 'pow' ? 'loPow' : 'loHit'].split(':');
+        const arr = (side === 'a' ? (arrName === 'pow' ? STATE.calc.powA : STATE.calc.hitA)
+          : (arrName === 'pow' ? STATE.calc.powB : STATE.calc.hitB));
+        let v = Number(el.value);
+        if (!Number.isFinite(v)) v = arrName === 'pow' ? null : 1;
+        arr[Number(i)] = arrName === 'pow' ? (v === null ? null : Math.max(0, Math.round(v))) : Math.max(1, Math.min(9, Math.round(v)));
+        render();
+      });
+    };
+    for (const el of document.querySelectorAll('[data-lo-pow]')) loCommit(el, 'pow');
+    for (const el of document.querySelectorAll('[data-lo-hit]')) loCommit(el, 'hit');
+    // 四技能槽：移除
+    for (const btn of document.querySelectorAll('[data-lo-del]')) {
+      btn.addEventListener('click', () => {
+        const [side, i] = btn.dataset.loDel.split(':');
+        const idx = Number(i);
+        const load = side === 'a' ? STATE.calc.loadA : STATE.calc.loadB;
+        const pows = side === 'a' ? STATE.calc.powA : STATE.calc.powB;
+        const hits = side === 'a' ? STATE.calc.hitA : STATE.calc.hitB;
+        load[idx] = null; pows[idx] = null; hits[idx] = 1;
+        render();
+      });
     }
   }
 
@@ -2011,6 +2160,7 @@ $('#themeBtn').addEventListener('click', () => {
       STATE, filterSpirits, filterSkills, spiritSkillsOf, learnersOf, spiritDetail, skillDetail,
       glossaryDetail, render, index, calcDamage, panelStat, levelCoef, typeEffect, usableSkillsOf,
       NATURES, natureByName, panelValue, panelInt, ivOf, defaultNat, stateIcon, withCalcSide, bindNatalBlock,
+      loadoutDamage, skillLoadout, pushLoadout, statCards,
       spiritCalcOf, calcStatsOf, natalBlock, bindNatalBlock, redrawNatalBlock, statBreakdown, natalBoxEl, defaultInvestSet,
     };
   } catch (err) {
