@@ -359,6 +359,55 @@ ok(rankDmg.length > 1 && rankDmg.every((v, i) => i === 0 || rankDmg[i - 1] >= v)
 // +20 固定威力 / +50% 后就是参考页的 332（上面已断言）
 ok(rankDmg[0] >= 327, `最高伤害 ≥ 327（实际 ${rankDmg[0]}）`);
 
+// 两侧的加点面板：与详情页同一套组件（个体按钮 + 性格逐项开关），但配置独立
+{
+  const boxA = A2 ? ids.get('app')._el.querySelector('.natal-block[data-calc-side="a"]') : null;
+  const boxB = ids.get('app')._el.querySelector('.natal-block[data-calc-side="b"]');
+  ok(!!boxA && !!boxB, '两侧各有一个加点面板（data-calc-side=a/b）');
+  ok(!boxA.querySelector('svg.radar') && !boxA.querySelector('svg'), '紧凑版不带雷达图');
+  ok(boxA.querySelectorAll('[data-nat-ivbtn]').length === 6, '每侧六项各一个「个体」按钮');
+  ok(boxA.querySelectorAll('[data-nat-btn]').length === 12, '每侧 12 个性格开关（每项两个）');
+  ok(!/data-calc="iv"/.test(calcHtml) && !/data-calc="nature"/.test(calcHtml), '旧的个体/性格输入控件已去掉');
+  ok(/当前血量/.test(calcHtml), '仍然可以填当前血量');
+  // 页面级 id 不能重复（曾经弹窗与两侧都用 id="natalBlock"，导致取到 null、
+  // 绑定被静默跳过、按钮点了没反应）
+  const allIds = [...calcHtml.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]);
+  const dup = allIds.filter((x, i) => allIds.indexOf(x) !== i);
+  ok(dup.length === 0, `伤害计算页没有重复 id（重复：${dup.join(',') || '无'}）`);
+
+  // 【先做点击测试】此时 A 侧还没被别的断言改过，初始应为"六项都不投"
+  // 点击后 redrawNatalBlock 会整块换掉面板（outerHTML），浏览器里内部会自动重绑
+  const spClick = A2.bySpirit.get(A2.calc.a);
+  const cfgClick = api.withCalcSide('a', () => api.spiritCalcOf(spClick));
+  ok(cfgClick.stats.spd.iv === 0 && cfgClick.stats.spd.nature === 'neutral', 'A 侧速度初始未投、中性');
+  const beforeSpd = api.withCalcSide('a', () => api.calcStatsOf(spClick, cfgClick).spd);
+  boxA.querySelector('[data-nat-ivbtn="spd"]').click();
+  ok(cfgClick.stats.spd.iv === 60, `点 A 侧「个体」按钮后 spd.iv = 60（实际 ${cfgClick.stats.spd.iv}）`);
+  api.bindNatalBlock();
+  const boxA2 = ids.get('app')._el.querySelector('.natal-block[data-calc-side="a"]');
+  ok(!!boxA2, '（点击后）A 侧面板仍在');
+  boxA2.querySelector('[data-nat-btn="spd"][data-nat-kind="up"]').click();
+  ok(cfgClick.stats.spd.nature === 'up', `点 A 侧「性格+」后 spd.nature = up（实际 ${cfgClick.stats.spd.nature}）`);
+  const afterSpd = api.withCalcSide('a', () => api.calcStatsOf(spClick, cfgClick).spd);
+  ok(afterSpd > beforeSpd, `A 侧速度面板从 ${beforeSpd} 升到 ${afterSpd}`);
+  ok(/预计伤害/.test(ids.get('app').innerHTML), '改完加点后结果区仍在');
+  // 收尾：把 A 侧清回初始，免得影响后面的断言
+  api.bindNatalBlock();
+  ids.get('app')._el.querySelector('.natal-block[data-calc-side="a"]').querySelector('.natal-reset').click();
+  ok(cfgClick.stats.spd.iv === 0 && cfgClick.stats.spd.nature === 'neutral', '「清空」把 A 侧速度清回初始');
+
+  // 配置独立性：改 A 侧的加点，不影响 B 侧，也不影响详情页那份
+  const spA = A2.bySpirit.get(A2.calc.a);
+  const spB = A2.bySpirit.get(A2.calc.b);
+  const cfgA = api.withCalcSide('a', () => api.spiritCalcOf(spA));
+  const cfgB = api.withCalcSide('b', () => api.spiritCalcOf(spB));
+  const modalCfg = api.spiritCalcOf(spA);
+  api.withCalcSide('a', () => { cfgA.stats.spd.iv = 60; cfgA.stats.spd.nature = 'up'; });
+  ok(cfgB.stats.spd.iv === 0, '改 A 侧不影响 B 侧');
+  ok(modalCfg.stats.spd.iv === 0 && modalCfg.stats.spd.nature === 'neutral', '改 A 侧也不影响详情页那份');
+  ok(cfgA !== modalCfg, '两侧配置与详情页配置是不同对象');
+}
+
 /* ---------------------------------------------------------- 性格 · 天分 */
 // 性格表源自 BiliWiki：30 种，每种 +1 项 / -1 项，每项属性当"增""减"各 5 次。
 // 修正系数 ±10%，且本作生命也受性格影响（与宝可梦不同）。
@@ -418,8 +467,8 @@ A2.view = 'spirits';
 console.log('\n· 详情页加点面板（真的点一下）');
 api.spiritDetail('152:1');                       // 翼王：速度种族 125
 const modal = ids.get('modalBody')._el;
-const box = modal.querySelector('#natalBlock');
-ok(!!box, '详情里渲染出加点面板 #natalBlock');
+const box = modal.querySelector('.natal-block');
+ok(!!box, '详情里渲染出加点面板 .natal-block');
 ok(!box.querySelector('#dnat-talent') && !box.querySelector('#dnat-star'), '详情面板里没有天分/星级下拉（个体上限常驻 60）');
 ok(box.querySelectorAll('[data-nat-btn]').length === 12, `每项两个性格开关，共 12 个（实际 ${box.querySelectorAll('[data-nat-btn]').length}）`);
 ok(box.querySelectorAll('[data-nat-ivbtn]').length === 6, `六项各一个「个体」按钮（实际 ${box.querySelectorAll('[data-nat-ivbtn]').length}）`);
@@ -432,16 +481,16 @@ ok(['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].every((k) => wc.stats[k].iv ===
 ok(Object.values(wc.stats).every((x) => x.nature === 'neutral'), '初始性格全中性');
 // 「个体」按钮：点一下投满该项并高亮，再点取消
 {
-  const box0 = ids.get('modalBody')._el.querySelector('#natalBlock');
+  const box0 = ids.get('modalBody')._el.querySelector('.natal-block');
   const btn = box0.querySelector('[data-nat-ivbtn="spd"]');
   ok(!btn.classList.contains('on'), '点之前速度按钮不高亮');
   btn.click();
   ok(wc.stats.spd.iv === 60, `点一下速度投满 60（实际 ${wc.stats.spd.iv}）`);
-  const btn2 = ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('[data-nat-ivbtn="spd"]');
+  const btn2 = ids.get('modalBody')._el.querySelector('.natal-block').querySelector('[data-nat-ivbtn="spd"]');
   ok(btn2.classList.contains('on'), '点之后速度按钮高亮');
   btn2.click();
   ok(wc.stats.spd.iv === 0, '再点一下取消（回到 0）');
-  const btn3 = ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('[data-nat-ivbtn="spd"]');
+  const btn3 = ids.get('modalBody')._el.querySelector('.natal-block').querySelector('[data-nat-ivbtn="spd"]');
   ok(!btn3.classList.contains('on'), '取消后按钮不再高亮');
   btn3.click();   // 留一个投满的状态给后面的用例
 }
@@ -459,20 +508,20 @@ ok(html2 !== '', '重画后弹窗仍有内容');
 ok(new RegExp(`>${after}<`).test(html2), `弹窗里显示了新的速度值 ${after}`);
 
 // 再点一次取消
-ids.get('modalBody')._el.querySelector('#natalBlock');           // 重画后要重新取
-const box2 = ids.get('modalBody')._el.querySelector('#natalBlock');
+ids.get('modalBody')._el.querySelector('.natal-block');           // 重画后要重新取
+const box2 = ids.get('modalBody')._el.querySelector('.natal-block');
 box2.querySelector('[data-nat-btn="spd"][data-nat-kind="up"]').click();
 ok(wc.stats.spd.nature === 'neutral', '再点一次取消加成');
 
 // 点「个体」按钮：投满 / 取消 / 3 项上限
 {
   // 把状态清干净，从"都不投"开始
-  ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('#dnat-reset').click();
+  ids.get('modalBody')._el.querySelector('.natal-block').querySelector('.natal-reset').click();
   ok(['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].every((k) => wc.stats[k].iv === 0), '「清空」后六项都不投');
 
-  const clickIv = (k) => ids.get('modalBody')._el.querySelector('#natalBlock')
+  const clickIv = (k) => ids.get('modalBody')._el.querySelector('.natal-block')
     .querySelector(`[data-nat-ivbtn="${k}"]`).click();
-  const btnOf = (k) => ids.get('modalBody')._el.querySelector('#natalBlock')
+  const btnOf = (k) => ids.get('modalBody')._el.querySelector('.natal-block')
     .querySelector(`[data-nat-ivbtn="${k}"]`);
 
   clickIv('spd');
@@ -498,7 +547,7 @@ ok(wc.stats.spd.nature === 'neutral', '再点一次取消加成');
 }
 // 清空 = 六项都不投
 {
-  ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('#dnat-reset').click();
+  ids.get('modalBody')._el.querySelector('.natal-block').querySelector('.natal-reset').click();
   const ivs = ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd'].map((x) => wc.stats[x].iv);
   ok(ivs.join(',') === '0,0,0,0,0,0', `「清空」后六项都是 0（实际 ${ivs.join(',')}）`);
 }
@@ -519,7 +568,7 @@ api.spiritDetail('152:1');
 const baseHtml = ids.get('modalBody').innerHTML;
 ok(/每行怎么读/.test(baseHtml), '详情里有「每行怎么读」的说明');
 ok(!/base-table/.test(baseHtml), '不再有单独的基础数值表（已合并进每行）');
-const boxBase = ids.get('modalBody')._el.querySelector('#natalBlock');
+const boxBase = ids.get('modalBody')._el.querySelector('.natal-block');
 const combined = boxBase.querySelectorAll('.nat-line.combined');
 ok(combined.length === 6, `六行都是合并行（实际 ${combined.length}）`);
 // 每行都要有：基础 / 常数 / 个体 / 性格开关 / 个体按钮
@@ -557,8 +606,8 @@ ok(bh.flat === 70 && bh.const === 100, `生命常数是 70 / 100（实际 ${bh.f
 // 同一项不能既加成又削弱。点已选的那项 = 取消。
 console.log('\n· 性格单项规则（+整列一项、−整列一项）');
 {
-  ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('#dnat-reset').click();
-  const nb = () => ids.get('modalBody')._el.querySelector('#natalBlock');
+  ids.get('modalBody')._el.querySelector('.natal-block').querySelector('.natal-reset').click();
+  const nb = () => ids.get('modalBody')._el.querySelector('.natal-block');
   const upBtn = (k) => nb().querySelector(`[data-nat-btn="${k}"][data-nat-kind="up"]`);
   const downBtn = (k) => nb().querySelector(`[data-nat-btn="${k}"][data-nat-kind="down"]`);
   const natOf = (k) => wc.stats[k].nature;
@@ -614,7 +663,7 @@ console.log('\n· 性格单项规则（+整列一项、−整列一项）');
   ok(ups.length <= 1, `「性格+」至多一项（实际 ${ups.join(',') || '无'}）`);
   ok(downs.length <= 1, `「性格−」至多一项（实际 ${downs.join(',') || '无'}）`);
   // 收尾：清干净，后面的用例从干净状态开始
-  ids.get('modalBody')._el.querySelector('#natalBlock').querySelector('#dnat-reset').click();
+  ids.get('modalBody')._el.querySelector('.natal-block').querySelector('.natal-reset').click();
 }
 
 /* ---------------------------------------------------------- 性格速查（挂到术语页） */

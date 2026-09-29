@@ -29,11 +29,11 @@ try {
   api.spiritDetail('152:1');
   const modal = env.byId.get('modalBody');
   console.log('弹窗内容长度:', modal.innerHTML.length);
-  const box = modal.querySelector('#natalBlock');
-  console.log('#natalBlock 存在:', !!box);
+  const box = modal.querySelector('.natal-block');
+  console.log('.natal-block 存在:', !!box);
   if (box) {
     console.log('  性格按钮数:', box.querySelectorAll('[data-nat-btn]').length);
-    console.log('  个体输入数:', box.querySelectorAll('[data-nat-iv]').length);
+    console.log('  个体按钮数:', box.querySelectorAll('[data-nat-ivbtn]').length);
     console.log('  雷达图存在:', box.innerHTML.includes('<svg'));
     const btn = box.querySelector('[data-nat-btn="spd"][data-nat-kind="up"]');
     console.log('  速度"性格+"按钮存在:', !!btn);
@@ -43,8 +43,8 @@ try {
     const after = api.calcStatsOf(api.STATE.bySpirit.get('152:1'), wc).spd;
     console.log(`  点击后速度: ${before} -> ${after}`, after > before ? '✓ 有反应' : '✗ 没反应');
     // 重画后还能不能继续操作
-    const box2 = env.byId.get('modalBody').querySelector('#natalBlock');
-    console.log('  重画后 #natalBlock 还在:', !!box2);
+    const box2 = env.byId.get('modalBody').querySelector('.natal-block');
+    console.log('  重画后 .natal-block 还在:', !!box2);
     const btn2 = box2?.querySelector('[data-nat-btn="spd"][data-nat-kind="down"]');
     btn2?.click();
     console.log('  再点"性格−"后:', wc.stats.spd.nature);
