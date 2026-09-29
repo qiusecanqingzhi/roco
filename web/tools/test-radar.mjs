@@ -472,10 +472,11 @@ ok(rankDmg[0] >= 327, `最高伤害 ≥ 327（实际 ${rankDmg[0]}）`);
 /* ---------------------------------------------------------- 四技能槽 */
 console.log('\n· 四技能槽 + 伤害占比');
 {
-  // 干净起点：两侧加点清空（注意 iv 与 nature 都要清），A 选一个技能
+  // 干净起点：两侧加点清空（注意 iv 与 nature 都要清），并把"已自动填过"的标记复位
   A2.calc.a = '20:1'; A2.calc.b = '43:1'; A2.calc.skillA = 7150060;
   A2.calc.loadA = [null, null, null, null]; A2.calc.powA = [null, null, null, null]; A2.calc.hitA = [1, 1, 1, 1];
   A2.calc.loadB = [null, null, null, null]; A2.calc.powB = [null, null, null, null]; A2.calc.hitB = [1, 1, 1, 1];
+  A2.calc.loInitA = false; A2.calc.loInitB = false;
   for (const side of ['a', 'b']) {
     const sp = A2.bySpirit.get(A2.calc[side]);
     const c = api.withCalcSide(side, () => api.spiritCalcOf(sp));
@@ -488,10 +489,35 @@ console.log('\n· 四技能槽 + 伤害占比');
   const appL = () => ids.get('app')._el;
   ok(appL().querySelectorAll('.calc-loadout').length === 2, '两侧各有一个四技能槽区块');
   const loA = () => appL().querySelector('.calc-loadout[data-loadout="a"]');
+  const loB = () => appL().querySelector('.calc-loadout[data-loadout="b"]');
   ok(loA().querySelectorAll('.lo-table tbody tr').length === 4, '每侧四行（四个技能槽）');
-  ok(loA().querySelectorAll('tr.lo-empty').length === 4, '初始四个槽都是空的');
 
-  // 点排序表一行 -> 放进 A 侧第一个空位
+  // 初始自动填：两侧都放进"自己伤害最高的 4 个技能"，防守方不再是空白
+  const filledA = A2.calc.loadA.filter(Boolean).length;
+  const filledB = A2.calc.loadB.filter(Boolean).length;
+  ok(filledA === 4, `A 侧初始自动填满 4 个（实际 ${filledA}）`);
+  ok(filledB === 4, `B 侧（防守方）初始也自动填满 4 个（实际 ${filledB}）`);
+  ok(loB().querySelectorAll('tr.lo-empty').length === 0, '防守方四技能槽没有空位');
+  ok(!/class="lo-dmg">\s*<span class="desc">—/.test(loB().innerHTML), '防守方每一招都算出了伤害（不是「—」）');
+  ok(loB().querySelectorAll('.lo-bar').length >= 4, '防守方每一招都有占比条');
+  // 自动填的应当是"伤害最高的几个"：与 topSkillsOf 的前 4 个一致
+  const topB4 = api.topSkillsOf('b', A2.bySpirit.get(A2.calc.b), A2.bySpirit.get(A2.calc.a), 4).map((x) => x.s.id);
+  ok(JSON.stringify(A2.calc.loadB) === JSON.stringify(topB4), 'B 侧填的正是它伤害最高的 4 个技能');
+
+  // 清空 A 侧（并把"已自动填过"标记复位），验证"点排序表一行 -> 放进第一个空位"
+  A2.calc.loadA = [null, null, null, null];
+  A2.calc.loInitA = false;
+  ids.get('app').innerHTML = '';
+  api.render();
+  ok(loA().querySelectorAll('tr.lo-empty').length === 0 || A2.calc.loadA.filter(Boolean).length === 4,
+    '（复位标记后）A 侧会被重新自动填满');
+  // 再清一次但**不复位标记**，模拟"用户自己把四招都删了" -> 不该自动填回来
+  for (const i of [0, 1, 2, 3]) {
+    const del = appL().querySelector(`[data-loadout="a"] [data-lo-del="a:${i}"]`);
+    if (del) del.click();
+  }
+  ok(A2.calc.loadA.every((x) => !x), '用户把四招都删掉后，不会被自动填回来');
+  ok(loA().querySelectorAll('tr.lo-empty').length === 4, '（删除后）A 侧四个槽都是空的');
   const pickRow = appL().querySelector('[data-calc-pick]');
   const pickId = Number(pickRow.dataset.calcPick);
   pickRow.click();
@@ -535,13 +561,21 @@ console.log('\n· 四技能槽 + 伤害占比');
   ok(hitDmg === halfDmg * 2, `连击 2 -> 总伤害翻倍（${halfDmg} -> ${hitDmg}）`);
   ok(/×2/.test(hitCell.innerHTML), '标注了 ×2 击');
 
-  // 占比：只有一个技能时是 100%
-  ok(/100\.0%/.test(hitCell.innerHTML), '单招时占比 100.0%');
+  // 占比：只剩一个技能时是 100%（单招占比的分母就是它自己）
+  {
+    const keep = A2.calc.loadA[0];
+    A2.calc.loadA = [keep, null, null, null];
+    ids.get('app').innerHTML = '';
+    api.render();
+    const cell = appL().querySelector('[data-loadout="a"] .lo-dmg');
+    ok(/100\.0%/.test(cell.innerHTML), '（清掉另外三招后）单招占比 100.0%');
+  }
 
   // 移除
   appL().querySelector('[data-lo-del="a:0"]').click();
   ok(A2.calc.loadA[0] === null, '点「×」能把技能移出槽位');
-  ok(appL().querySelectorAll('.calc-loadout[data-loadout="a"] tr.lo-empty').length === 4, '移除后四个槽都空了');
+  ok(appL().querySelectorAll('.calc-loadout[data-loadout="a"] tr.lo-empty').length === 4,
+    '把四招都删掉后是四个空位（不会又自动填回来）');
 }
 
 /* ---------------------------------------------------------- 性格 · 天分 */

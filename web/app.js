@@ -86,13 +86,16 @@ const STATE = {
     // 每招的覆盖值：威力（null=用技能本身的基础威力）、连击（默认 1）
     powA: [null, null, null, null], powB: [null, null, null, null],
     hitA: [1, 1, 1, 1], hitB: [1, 1, 1, 1],
+    // 四技能槽是否已经"自动填过一次"（每侧一个）。
+    // 只在第一次渲染时按伤害自动填；用户手动删空后不会又被填回来。
+    // 换精灵时把对应那一侧重置为 false，让它对新精灵重新自动填。
+    loInitA: false, loInitB: false,
     level: 60,
     // 与官方说明页算例同参数：(75 + 20) × (1 + 50%) = 142.5 -> 显示威力 356 -> 伤害 332
     flatAdd: 20, skillPct: 0.5, atkStage: 0, defStage: 0,
     powerMul: 1, finalMul: 1, hpA: 0, hpB: 0, sortByDamage: true,
     // 两侧各自的加点配置：Map<"id:form", {stats:{k:{iv,nature}}}>，与详情页那份独立
-    cfgA: new Map(), cfgB: new Map(),
-  },
+    cfgA: new Map(), cfgB: new Map(),  },
   calcSide: null,       // null=详情弹窗 / 'a'|'b'=伤害计算左右两侧
   view: 'spirits',
   filters: {
@@ -1083,10 +1086,73 @@ function pushLoadout(side, skillId) {
 }
 
 /**
+ * 把这侧"伤害最高的技能"（可选只取前 limit 个）算出来。
+ * 用该侧自己的加点配置；威力用技能自带的基础威力。
+ * 注意：这里**不含**全局的 固定加威力 / 本次技能威力% —— 保持与官方说明页
+ * 算例口径一致（扇风打奇丽花 = 332）；四技能槽那份是含全局加成的。
+ */
+function topSkillsOf(side, sp, otherSp, limit) {
+  const c = STATE.calc;
+  const cfg = withCalcSide(side, () => spiritCalcOf(sp));
+  const otherSide = side === 'a' ? 'b' : 'a';
+  const targetHp = otherSide === 'a' ? (c.hpA || otherSp.stats.hp) : (c.hpB || otherSp.stats.hp);
+  const list = usableSkillsOf(sp)
+    .filter((s) => (s.dmgMax ?? 0) > 0 && s.cat !== '状态')
+    .map((s) => {
+      const ak = (s.cat ?? '') === '魔法' ? 'satk' : 'patk';
+      return {
+        s,
+        r: calcDamage(sp, otherSp, s, {
+          level: c.level,
+          atkIV: cfg.stats[ak].iv, atkNature: cfg.stats[ak].nature,
+          targetHp,
+        }),
+      };
+    })
+    .sort((x, y) => y.r.dmg - x.r.dmg);
+  return limit ? list.slice(0, limit) : list;
+}
+
+/** 某一侧的四技能槽是否还全是空的 */
+function loadoutIsEmpty(side) {
+  return (side === 'a' ? STATE.calc.loadA : STATE.calc.loadB).every((x) => !x);
+}
+
+/** 该侧是否已经自动填过（没填过才自动填；用户删空后不再填回来） */
+function loadoutInited(side) {
+  return side === 'a' ? STATE.calc.loInitA : STATE.calc.loInitB;
+}
+function markLoadoutInited(side) {
+  if (side === 'a') STATE.calc.loInitA = true; else STATE.calc.loInitB = true;
+}
+/** 换精灵时重置该侧的自动填标记，让它对新精灵重新自动填 */
+function resetLoadoutInit(side) {
+  if (side === 'a') STATE.calc.loInitA = false; else STATE.calc.loInitB = false;
+  if (side === 'a') {
+    STATE.calc.loadA = [null, null, null, null];
+    STATE.calc.powA = [null, null, null, null];
+    STATE.calc.hitA = [1, 1, 1, 1];
+  } else {
+    STATE.calc.loadB = [null, null, null, null];
+    STATE.calc.powB = [null, null, null, null];
+    STATE.calc.hitB = [1, 1, 1, 1];
+  }
+}
+
+/** 用该侧伤害最高的前 n 个技能填满四技能槽 */
+function fillLoadoutWithTop(side, sp, otherSp, n = 4) {
+  const top = topSkillsOf(side, sp, otherSp, n).map((x) => x.s.id);
+  if (side === 'a') STATE.calc.loadA = [top[0] ?? null, top[1] ?? null, top[2] ?? null, top[3] ?? null];
+  else STATE.calc.loadB = [top[0] ?? null, top[1] ?? null, top[2] ?? null, top[3] ?? null];
+}
+
+/**
  * 算出一侧四技能槽每一招的伤害与合计。
  * 与 calcDamage 同一套参数（等级 / 个体 / 性格 / 各类乘区），只是逐槽算一遍。
+ * atkKey / defKey 这两个入参保留是为了调用方语义清晰，实际内部按每一招自己的
+ * 类别（物攻/魔攻）决定用哪两项 —— 因为四招里可能物魔混着。
  */
-function loadoutDamage(side, sp, otherSp, atkKey, defKey) {
+function loadoutDamage(side, sp, otherSp) {
   const c = STATE.calc;
   const load = side === 'a' ? c.loadA : c.loadB;
   const pows = side === 'a' ? c.powA : c.powB;
@@ -1094,8 +1160,6 @@ function loadoutDamage(side, sp, otherSp, atkKey, defKey) {
   const cfg = withCalcSide(side, () => spiritCalcOf(sp));
   const otherSide = side === 'a' ? 'b' : 'a';
   const targetHp = otherSide === 'a' ? (c.hpA || otherSp.stats.hp) : (c.hpB || otherSp.stats.hp);
-  const defIV = withCalcSide(otherSide, () => spiritCalcOf(otherSp).stats[defKey]?.iv ?? 0);
-  const defNature = withCalcSide(otherSide, () => spiritCalcOf(otherSp).stats[defKey]?.nature ?? 'neutral');
   const rows = [];
   let sum = 0;
   load.forEach((sid, i) => {
@@ -1103,13 +1167,23 @@ function loadoutDamage(side, sp, otherSp, atkKey, defKey) {
     if (!sk) { rows.push({ i, sk: null, pow: 0, hit: 1, dmg: 0, total: 0 }); return; }
     const pow = pows[i] != null ? pows[i] : (sk.dmgMax ?? 0);
     const hit = hits[i] ?? 1;
+    // 出招这一侧自己能打多少，只取决于自己的攻 + 技能，与对面选没选技能无关。
+    // 所以这里用一个"基于自己"的攻防项（物攻->物防、魔攻->魔防），
+    // 而不是外面传进来的 defKey（那个是"对面打我会用到的防"，对面没选技能时是 null）。
+    // 出招这一侧自己能打多少，只取决于自己的攻 + 技能 + 对面的防，
+    // 与"对面选没选技能"无关（外面传进来的 defKey 是"对面打我会用到的防"，
+    // 对面没选技能时是 null，拿它当守卫会让整块算不出来）。
+    const ownAtk = (sk.cat ?? '') === '魔法' ? 'satk' : 'patk';
+    const againstDef = ownAtk === 'satk' ? 'sdef' : 'pdef';
+    // 挨打的是对面：用对面的这一项配置
+    const tgtDefIV = withCalcSide(otherSide, () => spiritCalcOf(otherSp).stats[againstDef]?.iv ?? 0);
+    const tgtDefNature = withCalcSide(otherSide, () => spiritCalcOf(otherSp).stats[againstDef]?.nature ?? 'neutral');
     let dmg = 0;
-    if (atkKey && defKey && pow > 0) {
+    if (pow > 0) {
       dmg = calcDamage(sp, otherSp, sk, {
         level: c.level,
-        atkIV: cfg.stats[atkKey].iv, atkNature: cfg.stats[atkKey].nature,
-        defIV, defNature,
-        // 威力用槽里的值（可被用户改过），不是技能自带的基础威力
+        atkIV: cfg.stats[ownAtk].iv, atkNature: cfg.stats[ownAtk].nature,
+        defIV: tgtDefIV, defNature: tgtDefNature,
         power: pow,
         flatAdd: c.flatAdd, skillPct: c.skillPct,
         atkStage: c.atkStage, defStage: c.defStage,
@@ -1129,8 +1203,8 @@ function loadoutDamage(side, sp, otherSp, atkKey, defKey) {
  * 每行：序号 / 图标 / 名字 / 属性 / 耗能 / 威力（可改）/ 连击（可改）/ 移除 / 总伤害 + 占比条。
  * 耗能与威力取自技能数据；连击数据里没有，默认 1，可手动改。
  */
-function skillLoadout(side, sp, otherSp, atkKey, defKey) {
-  const { rows, sum } = loadoutDamage(side, sp, otherSp, atkKey, defKey);
+function skillLoadout(side, sp, otherSp) {
+  const { rows, sum } = loadoutDamage(side, sp, otherSp);
 
   const body = rows.map(({ i, sk, pow, hit, dmg, total }) => {
     if (!sk) {
@@ -1295,6 +1369,12 @@ function viewCalc() {
   const a = STATE.bySpirit.get(c.a) ?? STATE.data.spirits[0];
   const b = STATE.bySpirit.get(c.b) ?? STATE.data.spirits[0];
 
+  // 四技能槽：第一次渲染时把两侧"伤害最高的 4 个技能"填进去，省得防守方一片空白。
+  // 只在【还没自动填过】时填 —— 用户手动删空后不能再给填回来（那会让人删不掉）。
+  // 换精灵时由下方 change 处理重置标记，从而对新精灵重新自动填。
+  if (!loadoutInited('a') && loadoutIsEmpty('a')) { fillLoadoutWithTop('a', a, b, 4); markLoadoutInited('a'); }
+  if (!loadoutInited('b') && loadoutIsEmpty('b')) { fillLoadoutWithTop('b', b, a, 4); markLoadoutInited('b'); }
+
   // 这一次参与计算的两项。没选技能就是 null（不高亮）——
   // 不要 fallback 成物攻，否则会误导成"这一项在参与计算"。
   const skA = c.skillA ? STATE.bySkill.get(c.skillA) : null;
@@ -1307,27 +1387,10 @@ function viewCalc() {
   const bDef = defAgainst(aAtk);   // A 出招 -> 打的是 B 的这个防
   const aDef = defAgainst(bAtk);   // B 出招 -> 打的是 A 的这个防
 
-  // 排序模式：把攻击方(a)的全部技能按伤害从高到低排出来
-  // 用攻击方自己的加点配置（与他打谁无关）
+  // 排序模式：把攻击方(a)的全部技能按伤害从高到低排出来（用攻击方自己的加点配置）
   let rankBlock = '';
   if (c.sortByDamage) {
-    const cfgA = withCalcSide('a', () => spiritCalcOf(a));
-    const cfgB = withCalcSide('b', () => spiritCalcOf(b));
-    const list = usableSkillsOf(a)
-      .filter((s) => (s.dmgMax ?? 0) > 0 && s.cat !== '状态')
-      .map((s) => {
-        const ak = (s.cat ?? '') === '魔法' ? 'satk' : 'patk';
-        return {
-          s,
-          r: calcDamage(a, b, s, {
-            level: c.level,
-            atkIV: cfgA.stats[ak].iv, atkNature: cfgA.stats[ak].nature,
-            targetHp: c.hpB || b.stats.hp,
-          }),
-        };
-      })
-      .sort((x, y) => y.r.dmg - x.r.dmg)
-      .slice(0, 12);
+    const list = topSkillsOf('a', a, b, 12);
     rankBlock = `<div class="section"><h3>${esc(a.name)} 打 ${esc(b.name)}：伤害最高的技能 <span class="n">前 ${list.length}</span></h3>
       <div class="table-wrap"><table>
         <thead><tr><th class="mid">图标</th><th>技能</th><th class="num">威力</th><th class="mid">系别</th>
@@ -1375,8 +1438,8 @@ function viewCalc() {
     </div>
 
     <div class="calc-loadouts">
-      ${skillLoadout('a', a, b, aAtk, bDef)}
-      ${skillLoadout('b', b, a, bAtk, aDef)}
+      ${skillLoadout('a', a, b)}
+      ${skillLoadout('b', b, a)}
     </div>
 
     <div class="desc" style="margin-top:10px;font-size:12px">
@@ -1827,7 +1890,13 @@ function bindView() {
       } else if (el.tagName === 'SELECT') {
         el.addEventListener('change', () => {
           const v = el.value;
-          if (key === 'spirit') { STATE.calc[el.dataset.side] = v; STATE.calc.skillA = null; STATE.calc.skillB = null; }
+          if (key === 'spirit') {
+            const side = el.dataset.side;
+            STATE.calc[side] = v;
+            STATE.calc.skillA = null; STATE.calc.skillB = null;
+            // 换了精灵：清掉该侧四技能槽并允许重新自动填（否则会留着上一只的技能）
+            resetLoadoutInit(side);
+          }
           else if (key === 'skill') STATE.calc[el.dataset.side === 'a' ? 'skillA' : 'skillB'] = v ? Number(v) : null;
           // 注意：性格/个体不在下拉里了 —— 改成和详情页同一套「个体按钮 + 性格逐项开关」，
           // 由 bindNatalBlock() 负责绑定（见下方 bindNatalBlock()）
@@ -2160,7 +2229,7 @@ $('#themeBtn').addEventListener('click', () => {
       STATE, filterSpirits, filterSkills, spiritSkillsOf, learnersOf, spiritDetail, skillDetail,
       glossaryDetail, render, index, calcDamage, panelStat, levelCoef, typeEffect, usableSkillsOf,
       NATURES, natureByName, panelValue, panelInt, ivOf, defaultNat, stateIcon, withCalcSide, bindNatalBlock,
-      loadoutDamage, skillLoadout, pushLoadout, statCards,
+      loadoutDamage, skillLoadout, pushLoadout, statCards, topSkillsOf, fillLoadoutWithTop,
       spiritCalcOf, calcStatsOf, natalBlock, bindNatalBlock, redrawNatalBlock, statBreakdown, natalBoxEl, defaultInvestSet,
     };
   } catch (err) {
