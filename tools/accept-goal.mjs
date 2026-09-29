@@ -42,12 +42,11 @@ console.log(`  「个体」按钮 ${withIv}/6 ${withIv === 6 ? '✓' : '✗'}`);
 console.log(`  性格 +/- 开关 ${withNat}/6 ${withNat === 6 ? '✓' : '✗'}`);
 console.log(`  属性图标 ${withIcon}/6 ${withIcon === 6 ? '✓' : '✗'}`);
 
-console.log('\n  高亮（出招 / 挨打）：');
+console.log('\n  高亮（已按要求去掉）：');
 for (const side of ['a', 'b']) {
   const cs = [...app.querySelectorAll(`.stat-cards[data-calc-side="${side}"] .s-card`)];
-  const atk = cs.filter((c) => c.classList.contains('role-atk')).map((c) => c.dataset.stat);
-  const def = cs.filter((c) => c.classList.contains('role-def')).map((c) => c.dataset.stat);
-  console.log(`    ${side} 侧  出招=[${atk.join(',') || '-'}]  挨打=[${def.join(',') || '-'}]`);
+  const hl = cs.filter((c) => /role-atk|role-def/.test(c.className ?? '')).length;
+  console.log(`    ${side} 侧描边高亮卡片数 = ${hl} ${hl === 0 ? '✓ 已去掉' : '✗ 仍在'}`);
 }
 
 console.log('\n=== ② 双栏并排 ===');
@@ -70,3 +69,10 @@ console.log(`  spd 面板 ${before} -> ${after}：${after > before ? '✓' : '�
 console.log(`  性格 up 已生效：${cfgA.stats.spd.nature === 'up' ? '✓' : '✗'}`);
 const hpUp = env.byId.get('app').querySelector('.stat-cards[data-calc-side="a"] [data-nat-btn="hp"][data-nat-kind="up"]');
 console.log(`  「+」整列唯一（生命 + 被禁用）：${hpUp.disabled ? '✓' : '✗'}`);
+// 性格削弱也能直接在这一页点
+env.byId.get('app').querySelector('.stat-cards[data-calc-side="a"] [data-nat-btn="patk"][data-nat-kind="down"]').click();
+console.log(`  在本页点「−」设削弱：${cfgA.stats.patk.nature === 'down' ? '✓' : '✗'}`);
+// 同一项不能既加又减：速度已是 up，它的 − 应禁用
+const spdDown = env.byId.get('app').querySelector('.stat-cards[data-calc-side="a"] [data-nat-btn="spd"][data-nat-kind="down"]');
+console.log(`  同项互斥（速度已 up -> 它的 − 被禁用）：${spdDown.disabled ? '✓' : '✗'}`);
+console.log(`  工具栏说明了 +- 是性格加减：${/就是性格的加成/.test(env.byId.get('app').innerHTML) ? '✓' : '✗'}`);

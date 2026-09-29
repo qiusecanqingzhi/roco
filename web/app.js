@@ -967,10 +967,8 @@ function spiritOptions(selected) {
 /**
  * 伤害计算的六维卡片区：3×2 网格。
  * 每张卡片：属性名 + 大字面板值 + 小字种族值 + 右侧「个体」按钮；
- * 卡片顶部是「+ / −」性格开关（整列各至多一项、同一项不能既加又减）。
- * 参与本次计算的两项会描边高亮：
- *   activeAtk —— 这一侧出招时看的攻击项（物攻/魔攻）
- *   activeDef —— 这一侧挨打时看的防御项（物防/魔防）
+ * 卡片右上角是「+ / −」性格开关（整列各至多一项、同一项不能既加又减）——
+ * 性格加点就在这一页完成，不用跑去详情页。
  */
 function statCards(sp, c, opts = {}) {
   const canInvestMore = STAT_ORDER.filter((k) => c.stats[k].iv > 0).length < 3;
@@ -982,10 +980,8 @@ function statCards(sp, c, opts = {}) {
     const b = statBreakdown(k, sp.stats[k] ?? 0, st.iv, st.nature);
     const isUp = upKey === k;
     const isDown = downKey === k;
-    const isAtk = opts.activeAtk === k;
-    const isDef = opts.activeDef === k;
     // 性格按钮的禁用规则（与详情页一致）：
-    //   已高亮 -> 可点（取消）；本列已被别的项占用 或 本项已占另一列 -> 禁用
+    //   已选中 -> 可点（取消）；本列已被别的项占用 或 本项已占另一列 -> 禁用
     const blocked = (kind) => {
       if (st.nature === kind) return false;
       const takenByOther = STAT_ORDER.some((x) => x !== k && c.stats[x].nature === kind);
@@ -994,7 +990,7 @@ function statCards(sp, c, opts = {}) {
     };
     const ivBlocked = !(st.iv > 0) && !canInvestMore;
     const title = `${STAT_LABEL6[k]}：${b.basePart}（种族${b.baseStat}×系数）+ ${b.flat}（常数）+ 个体${st.iv}×系数${b.ivGain ? ` +${b.ivGain}` : ''}${b.coef !== 1 ? ` ×${b.coef}（性格）` : ''} + ${b.const} = ${b.panel}`;
-    return `<div class="s-card${isAtk ? ' role-atk' : ''}${isDef ? ' role-def' : ''}" data-stat="${k}" title="${title}">
+    return `<div class="s-card" data-stat="${k}" title="${title}">
       <div class="s-card-top">
         <span class="s-name"><span class="nat-ic-wrap">${stateIcon(k)}</span>${STAT_LABEL6[k]}</span>
         <span class="s-nats">
@@ -1134,14 +1130,11 @@ function calcSide(side, sp, otherSp, opts = {}) {
 
     <div class="calc-toolbar">
       <span class="desc">个体上限 <b>${IV_MAX}</b>　最多投 <b>3 项</b></span>
-      <span class="calc-legend">
-        ${atkKey ? `<i class="lg-atk"></i>出招用 <b>${STAT_LABEL6[atkKey]}</b>` : '<span class="desc">选技能后显示出招用的属性</span>'}
-        ${defKey ? `<i class="lg-def"></i>挨打看 <b>${STAT_LABEL6[defKey]}</b>` : ''}
-      </span>
+      <span class="desc">每张卡片右上角的 <b>+</b> / <b>−</b> 就是性格的加成 / 削弱（各至多一项）</span>
       <button class="chip natal-reset" data-calc-reset="${side}">清空</button>
     </div>
 
-    ${statCards(sp, cfg, { side, activeAtk: atkKey, activeDef: defKey })}
+    ${statCards(sp, cfg, { side })}
 
     ${result}
   </div>`;

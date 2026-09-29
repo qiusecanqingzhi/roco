@@ -398,20 +398,13 @@ ok(rankDmg[0] >= 327, `最高伤害 ≥ 327（实际 ${rankDmg[0]}）`);
   }
   ok(panelOk === 6, `六张卡片的面板值都与 statBreakdown 一致（${panelOk}/6）`);
 
-  // 高亮规则：
-  //   🟠 出招高亮 = 自己选了技能时，该技能用的攻（A 选了物攻技能 -> A 侧物攻）
-  //   🔵 挨打高亮 = 对面选了技能时，我要用的防（A 用物攻打 -> **A 侧物防**）
-  // B 没选技能，所以 B 侧两项都不高亮
-  const atkCardsA = [...cardsA()].filter((c) => c.classList.contains('role-atk')).map((c) => c.dataset.stat);
-  const defCardsA = [...cardsA()].filter((c) => c.classList.contains('role-def')).map((c) => c.dataset.stat);
-  const atkCardsB = [...cardsB()].filter((c) => c.classList.contains('role-atk')).map((c) => c.dataset.stat);
-  const defCardsB = [...cardsB()].filter((c) => c.classList.contains('role-def')).map((c) => c.dataset.stat);
-  ok(atkCardsA.length === 1 && atkCardsA[0] === 'patk', `A 用的物攻技能 -> A 侧物攻描边（实际 ${atkCardsA.join(',')}）`);
-  ok(defCardsA.length === 1 && defCardsA[0] === 'pdef', `A 打的是物防 -> A 侧物防描边（实际 ${defCardsA.join(',')}）`);
-  ok(atkCardsB.length === 0 && defCardsB.length === 0, `B 没选技能 -> B 侧不高亮（实际 ${[...atkCardsB, ...defCardsB].join(',')}）`);
-  // 两侧都不该同时出现"攻+防"以外的高亮
-  ok([...cardsA()].filter((c) => c.classList.contains('role-atk') && c.classList.contains('role-def')).length === 0,
-    'A 侧没有同时既是攻又是防的卡片');
+  // 性格加点直接在这一页完成：卡片右上角就是「+ / −」，不再画攻/防描边高亮
+  ok(cardsA().length + cardsB().length === 12, '12 张卡片都没有攻/防高亮类');
+  ok([...cardsA()].every((c) => !/role-atk|role-def/.test(c.className ?? '')), 'A 侧卡片没有高亮类');
+  const upBtn0 = cardsA()[1].querySelector('[data-nat-btn="patk"][data-nat-kind="up"]');
+  ok(!!upBtn0, '卡片里有「+」性格按钮（可直接点）');
+  ok(!!cardsA()[1].querySelector('[data-nat-btn="patk"][data-nat-kind="down"]'), '卡片里有「−」性格按钮');
+  ok(/就是性格的加成/.test(live), '工具栏写明了「+ / −」是性格加减');
 
   // 页面级 id 不能重复（曾经弹窗与两侧都用 id="natalBlock"，导致取到 null、
   // 绑定被静默跳过、按钮点了没反应）

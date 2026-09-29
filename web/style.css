@@ -513,10 +513,6 @@ table.matrix td {
   min-width: 0; padding: 7px 9px 8px;
   background: var(--card); border: 1px solid var(--line); border-radius: 10px;
 }
-/* 参与本次计算的两项：出招看的攻（橙）、挨打看的防（蓝） */
-.s-card.role-atk { border-color: #d98b2b; background: #d98b2b12; }
-.s-card.role-def { border-color: #4a7fd0; background: #4a7fd012; }
-.s-card.role-atk.role-def { border-color: #8a5fd0; background: #8a5fd012; }
 .s-card-top { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 3px; }
 .s-card-top .s-name {
   display: flex; align-items: center; gap: 5px; min-width: 0;
@@ -555,10 +551,6 @@ table.matrix td {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   margin-bottom: 8px; font-size: 12px;
 }
-.calc-toolbar .calc-legend { display: flex; align-items: center; gap: 5px; color: var(--text-dim); }
-.calc-toolbar .calc-legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
-.calc-toolbar .calc-legend i.lg-atk { background: #d98b2b; }
-.calc-toolbar .calc-legend i.lg-def { background: #4a7fd0; margin-left: 6px; }
 
 /* 窄屏：卡片退成两列 */
 @media (max-width: 560px) {
