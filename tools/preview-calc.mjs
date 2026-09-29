@@ -20,10 +20,13 @@ const txt = (el) => el.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').t
 
 console.log('=== 两侧面板 ===');
 for (const side of ['a', 'b']) {
-  const box = app.querySelector(`.natal-block[data-calc-side="${side}"]`);
-  console.log(`\n[${side} 侧] 工具栏: ${txt(box.querySelector('.natal-toolbar'))}`);
-  const lines = box.querySelectorAll('.nat-line.combined');
-  for (const l of lines) console.log('   ' + txt(l));
+  const box = app.querySelector(`.stat-cards[data-calc-side="${side}"]`);
+  if (!box) { console.log(`\n[${side} 侧] 没找到卡片区`); continue; }
+  console.log(`\n[${side} 侧] 卡片(${box.querySelectorAll('.s-card').length} 张):`);
+  for (const card of box.querySelectorAll('.s-card')) {
+    const role = card.classList.contains('role-atk') ? ' [出招高亮]' : card.classList.contains('role-def') ? ' [挨打高亮]' : '';
+    console.log('   ' + txt(card) + role);
+  }
 }
 
 console.log('\n=== 结果区（A 打 B）===');

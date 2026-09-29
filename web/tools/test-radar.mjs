@@ -337,11 +337,13 @@ api.render();
 const calcHtml = ids.get('app').innerHTML;
 ok(/伤害计算/.test(calcHtml), '渲染出「伤害计算」页');
 ok(/岚鸟/.test(calcHtml) && /奇丽花/.test(calcHtml), '两侧分别显示岚鸟与奇丽花');
-ok(/142\.5/.test(calcHtml), '页面摊开了①有效威力 142.5');
-ok(/356/.test(calcHtml), '页面摊开了②显示威力 356');
-ok(/332/.test(calcHtml), '页面摊开了④预计伤害 332');
-ok(/0\.9024/.test(calcHtml), '页面显示等级系数 0.9024');
-ok(/需要/.test(calcHtml) && /下/.test(calcHtml), '给出「需要几下」');
+// 这几条要在"当前 DOM"上查：后面的卡片用例会重渲染，早先抓的 calcHtml 会过期
+const calcLive = () => ids.get('app').innerHTML;
+ok(/142\.5/.test(calcLive()), '页面摊开了①有效威力 142.5');
+ok(/356/.test(calcLive()), '页面摊开了②显示威力 356');
+ok(/332/.test(calcLive()), '页面摊开了④预计伤害 332');
+ok(/0\.9024/.test(calcLive()), '页面显示等级系数 0.9024');
+ok(/需要/.test(calcLive()) && /下/.test(calcLive()), '给出「需要几下」');
 ok(/data-calc="level"/.test(calcHtml), '等级可调');
 ok(/data-calc="flatAdd"/.test(calcHtml), '固定加威力可调');
 ok(/data-calc="skillPct"/.test(calcHtml), '本次技能威力%可调');
@@ -359,16 +361,58 @@ ok(rankDmg.length > 1 && rankDmg.every((v, i) => i === 0 || rankDmg[i - 1] >= v)
 // +20 固定威力 / +50% 后就是参考页的 332（上面已断言）
 ok(rankDmg[0] >= 327, `最高伤害 ≥ 327（实际 ${rankDmg[0]}）`);
 
-// 两侧的加点面板：与详情页同一套组件（个体按钮 + 性格逐项开关），但配置独立
+// 两侧的六维卡片区：3×2 卡片（大字面板值 + 小字种族值 + 个体按钮 + 性格开关）
 {
-  const boxA = A2 ? ids.get('app')._el.querySelector('.natal-block[data-calc-side="a"]') : null;
-  const boxB = ids.get('app')._el.querySelector('.natal-block[data-calc-side="b"]');
-  ok(!!boxA && !!boxB, '两侧各有一个加点面板（data-calc-side=a/b）');
-  ok(!boxA.querySelector('svg.radar') && !boxA.querySelector('svg'), '紧凑版不带雷达图');
-  ok(boxA.querySelectorAll('[data-nat-ivbtn]').length === 6, '每侧六项各一个「个体」按钮');
-  ok(boxA.querySelectorAll('[data-nat-btn]').length === 12, '每侧 12 个性格开关（每项两个）');
-  ok(!/data-calc="iv"/.test(calcHtml) && !/data-calc="nature"/.test(calcHtml), '旧的个体/性格输入控件已去掉');
-  ok(/当前血量/.test(calcHtml), '仍然可以填当前血量');
+  // 显式设回基准状态（前面的用例可能改过技能选择），再重渲染取实时 DOM
+  A2.calc.a = '20:1'; A2.calc.b = '43:1'; A2.calc.skillA = 7150060; A2.calc.skillB = null;
+  A2.view = 'calc';
+  ids.get('app').innerHTML = '';
+  api.render();
+  const live = calcLive();
+
+  const app2 = () => ids.get('app')._el;
+  const cardsA = () => app2().querySelectorAll('.stat-cards[data-calc-side="a"] .s-card');
+  const cardsB = () => app2().querySelectorAll('.stat-cards[data-calc-side="b"] .s-card');
+  ok(cardsA().length === 6 && cardsB().length === 6, `两侧各 6 张卡片（实际 ${cardsA().length} / ${cardsB().length}）`);
+  ok(app2().querySelectorAll('.stat-cards[data-calc-side="a"] [data-nat-ivbtn]').length === 6, '每侧六项各一个「个体」按钮');
+  ok(app2().querySelectorAll('.stat-cards[data-calc-side="a"] [data-nat-btn]').length === 12, '每侧 12 个性格开关（每项两个）');
+  ok(!/data-calc="iv"/.test(live) && !/data-calc="nature"/.test(live), '旧的个体/性格输入控件已去掉');
+  ok(/当前血量/.test(live), '仍然可以填当前血量');
+
+  // 卡片里要有"大字面板值"和"小字种族值"
+  const firstCard = cardsA()[0];
+  ok(/class="s-panel"/.test(firstCard.innerHTML), '卡片有大字面板值（.s-panel）');
+  ok(/class="s-base"/.test(firstCard.innerHTML), '卡片有小字种族值（.s-base）');
+  ok(/种族/.test(firstCard.innerHTML), '小字标明了「种族」');
+  // 六张卡片的属性要对上 STAT_ORDER
+  const stats = [...cardsA()].map((c) => c.dataset.stat);
+  ok(stats.join(',') === 'hp,patk,satk,pdef,sdef,spd', `六张卡片顺序为 生命/物攻/魔攻/物防/魔防/速度（实际 ${stats.join(',')}）`);
+  // 面板值要与 statBreakdown 一致
+  const spA0 = A2.bySpirit.get(A2.calc.a);
+  const cfgA0 = api.withCalcSide('a', () => api.spiritCalcOf(spA0));
+  let panelOk = 0;
+  for (const k of ['hp', 'patk', 'satk', 'pdef', 'sdef', 'spd']) {
+    const b = api.statBreakdown(k, spA0.stats[k], cfgA0.stats[k].iv, cfgA0.stats[k].nature);
+    const card = [...cardsA()].find((c) => c.dataset.stat === k);
+    if (card && new RegExp(`>${b.panel}<`).test(card.innerHTML)) panelOk++;
+  }
+  ok(panelOk === 6, `六张卡片的面板值都与 statBreakdown 一致（${panelOk}/6）`);
+
+  // 高亮规则：
+  //   🟠 出招高亮 = 自己选了技能时，该技能用的攻（A 选了物攻技能 -> A 侧物攻）
+  //   🔵 挨打高亮 = 对面选了技能时，我要用的防（A 用物攻打 -> **A 侧物防**）
+  // B 没选技能，所以 B 侧两项都不高亮
+  const atkCardsA = [...cardsA()].filter((c) => c.classList.contains('role-atk')).map((c) => c.dataset.stat);
+  const defCardsA = [...cardsA()].filter((c) => c.classList.contains('role-def')).map((c) => c.dataset.stat);
+  const atkCardsB = [...cardsB()].filter((c) => c.classList.contains('role-atk')).map((c) => c.dataset.stat);
+  const defCardsB = [...cardsB()].filter((c) => c.classList.contains('role-def')).map((c) => c.dataset.stat);
+  ok(atkCardsA.length === 1 && atkCardsA[0] === 'patk', `A 用的物攻技能 -> A 侧物攻描边（实际 ${atkCardsA.join(',')}）`);
+  ok(defCardsA.length === 1 && defCardsA[0] === 'pdef', `A 打的是物防 -> A 侧物防描边（实际 ${defCardsA.join(',')}）`);
+  ok(atkCardsB.length === 0 && defCardsB.length === 0, `B 没选技能 -> B 侧不高亮（实际 ${[...atkCardsB, ...defCardsB].join(',')}）`);
+  // 两侧都不该同时出现"攻+防"以外的高亮
+  ok([...cardsA()].filter((c) => c.classList.contains('role-atk') && c.classList.contains('role-def')).length === 0,
+    'A 侧没有同时既是攻又是防的卡片');
+
   // 页面级 id 不能重复（曾经弹窗与两侧都用 id="natalBlock"，导致取到 null、
   // 绑定被静默跳过、按钮点了没反应）
   const allIds = [...calcHtml.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]);
@@ -376,24 +420,24 @@ ok(rankDmg[0] >= 327, `最高伤害 ≥ 327（实际 ${rankDmg[0]}）`);
   ok(dup.length === 0, `伤害计算页没有重复 id（重复：${dup.join(',') || '无'}）`);
 
   // 【先做点击测试】此时 A 侧还没被别的断言改过，初始应为"六项都不投"
-  // 点击后 redrawNatalBlock 会整块换掉面板（outerHTML），浏览器里内部会自动重绑
+  // 点击后整页 render() 会换掉卡片区，所以要重新取节点
   const spClick = A2.bySpirit.get(A2.calc.a);
   const cfgClick = api.withCalcSide('a', () => api.spiritCalcOf(spClick));
   ok(cfgClick.stats.spd.iv === 0 && cfgClick.stats.spd.nature === 'neutral', 'A 侧速度初始未投、中性');
   const beforeSpd = api.withCalcSide('a', () => api.calcStatsOf(spClick, cfgClick).spd);
-  boxA.querySelector('[data-nat-ivbtn="spd"]').click();
+  app2().querySelector('.stat-cards[data-calc-side="a"] [data-nat-ivbtn="spd"]').click();
   ok(cfgClick.stats.spd.iv === 60, `点 A 侧「个体」按钮后 spd.iv = 60（实际 ${cfgClick.stats.spd.iv}）`);
-  api.bindNatalBlock();
-  const boxA2 = ids.get('app')._el.querySelector('.natal-block[data-calc-side="a"]');
-  ok(!!boxA2, '（点击后）A 侧面板仍在');
-  boxA2.querySelector('[data-nat-btn="spd"][data-nat-kind="up"]').click();
+  ok(cardsA().length === 6, '（点击后）A 侧卡片仍在');
+  app2().querySelector('.stat-cards[data-calc-side="a"] [data-nat-btn="spd"][data-nat-kind="up"]').click();
   ok(cfgClick.stats.spd.nature === 'up', `点 A 侧「性格+」后 spd.nature = up（实际 ${cfgClick.stats.spd.nature}）`);
   const afterSpd = api.withCalcSide('a', () => api.calcStatsOf(spClick, cfgClick).spd);
   ok(afterSpd > beforeSpd, `A 侧速度面板从 ${beforeSpd} 升到 ${afterSpd}`);
   ok(/预计伤害/.test(ids.get('app').innerHTML), '改完加点后结果区仍在');
+  // 性格按钮的互斥规则在卡片区同样生效
+  ok(app2().querySelector('.stat-cards[data-calc-side="a"] [data-nat-btn="hp"][data-nat-kind="up"]').disabled,
+    '「+」列已被速度占用 -> 生命卡片的「+」被禁用');
   // 收尾：把 A 侧清回初始，免得影响后面的断言
-  api.bindNatalBlock();
-  ids.get('app')._el.querySelector('.natal-block[data-calc-side="a"]').querySelector('.natal-reset').click();
+  app2().querySelector('[data-calc-reset="a"]').click();
   ok(cfgClick.stats.spd.iv === 0 && cfgClick.stats.spd.nature === 'neutral', '「清空」把 A 侧速度清回初始');
 
   // 配置独立性：改 A 侧的加点，不影响 B 侧，也不影响详情页那份

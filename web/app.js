@@ -215,9 +215,8 @@ function stateIcon(k) {
 }
 
 /** 雷达图 + 数值条 + 加点控件（整体可重画）。
- *  opts.side：'a'/'b' 表示这是伤害计算的一侧（配置源与详情页不同）
- *  opts.compact：紧凑版（去掉雷达图与数值条，给伤害计算两侧用） */
-function natalBlock(sp, c, opts = {}) {
+ *  配置源由 STATE.calcSide 决定（null=详情弹窗 / 'a'|'b'=伤害计算两侧） */
+function natalBlock(sp, c) {
   const vals = calcStatsOf(sp, c);
   const cap = IV_MAX;
   // 「最多 3 项」是游戏规则，要保留 —— 否则会算出游戏里不存在的面板
@@ -313,18 +312,7 @@ function natalBlock(sp, c, opts = {}) {
   }).join('');
 
   // compact：伤害计算两侧用的紧凑版 —— 去掉雷达图与重复的数值条
-  // （伤害计算每侧只看"攻/防那两项"，不需要形状图，也没地方放）
-  if (opts.compact) {
-    return `<div class="natal-block" data-natal-block="1" data-spirit="${sp.id}:${sp.formId}"${opts.side ? ` data-calc-side="${opts.side}"` : ''}>
-      <div class="natal-toolbar">
-        <span class="desc">个体上限 <b>${IV_MAX}</b>　最多投 <b>3 项</b>　已投 <b>${invested}/3</b></span>
-        <button class="chip natal-reset">清空</button>
-      </div>
-      <div class="nat-lines">${controls}</div>
-    </div>`;
-  }
-
-  return `<div class="natal-block" data-natal-block="1" data-spirit="${sp.id}:${sp.formId}"${opts.side ? ` data-calc-side="${opts.side}"` : ''}>
+  return `<div class="natal-block" data-natal-block="1" data-spirit="${sp.id}:${sp.formId}">
     <div class="stat-wrap">
       ${radarChart(vals)}
       <div class="stat-bars">${bars}</div>
@@ -976,8 +964,114 @@ function spiritOptions(selected) {
   }).join('');
 }
 
-/** 一侧的面板 + 技能选择。加点用与详情页同一套组件（个体按钮 + 性格逐项开关） */
-function calcSide(side, sp, otherSp) {
+/**
+ * 伤害计算的六维卡片区：3×2 网格。
+ * 每张卡片：属性名 + 大字面板值 + 小字种族值 + 右侧「个体」按钮；
+ * 卡片顶部是「+ / −」性格开关（整列各至多一项、同一项不能既加又减）。
+ * 参与本次计算的两项会描边高亮：
+ *   activeAtk —— 这一侧出招时看的攻击项（物攻/魔攻）
+ *   activeDef —— 这一侧挨打时看的防御项（物防/魔防）
+ */
+function statCards(sp, c, opts = {}) {
+  const canInvestMore = STAT_ORDER.filter((k) => c.stats[k].iv > 0).length < 3;
+  const upKey = STAT_ORDER.find((k) => c.stats[k].nature === 'up') ?? null;
+  const downKey = STAT_ORDER.find((k) => c.stats[k].nature === 'down') ?? null;
+
+  return `<div class="stat-cards" data-stat-cards="1" data-calc-side="${opts.side ?? ''}" data-spirit="${sp.id}:${sp.formId}">${STAT_ORDER.map((k) => {
+    const st = c.stats[k];
+    const b = statBreakdown(k, sp.stats[k] ?? 0, st.iv, st.nature);
+    const isUp = upKey === k;
+    const isDown = downKey === k;
+    const isAtk = opts.activeAtk === k;
+    const isDef = opts.activeDef === k;
+    // 性格按钮的禁用规则（与详情页一致）：
+    //   已高亮 -> 可点（取消）；本列已被别的项占用 或 本项已占另一列 -> 禁用
+    const blocked = (kind) => {
+      if (st.nature === kind) return false;
+      const takenByOther = STAT_ORDER.some((x) => x !== k && c.stats[x].nature === kind);
+      const otherKind = kind === 'up' ? isDown : isUp;
+      return takenByOther || otherKind;
+    };
+    const ivBlocked = !(st.iv > 0) && !canInvestMore;
+    const title = `${STAT_LABEL6[k]}：${b.basePart}（种族${b.baseStat}×系数）+ ${b.flat}（常数）+ 个体${st.iv}×系数${b.ivGain ? ` +${b.ivGain}` : ''}${b.coef !== 1 ? ` ×${b.coef}（性格）` : ''} + ${b.const} = ${b.panel}`;
+    return `<div class="s-card${isAtk ? ' role-atk' : ''}${isDef ? ' role-def' : ''}" data-stat="${k}" title="${title}">
+      <div class="s-card-top">
+        <span class="s-name"><span class="nat-ic-wrap">${stateIcon(k)}</span>${STAT_LABEL6[k]}</span>
+        <span class="s-nats">
+          <button type="button" class="nat-btn up${isUp ? ' on' : ''}" data-nat-btn="${k}" data-nat-kind="up"
+            ${blocked('up') ? 'disabled' : ''} title="${isUp ? `取消 ${STAT_LABEL6[k]} 的加成` : `给 ${STAT_LABEL6[k]} 加成 ×${NATURE_MULT.up}`}">+</button>
+          <button type="button" class="nat-btn down${isDown ? ' on' : ''}" data-nat-btn="${k}" data-nat-kind="down"
+            ${blocked('down') ? 'disabled' : ''} title="${isDown ? `取消 ${STAT_LABEL6[k]} 的削弱` : `给 ${STAT_LABEL6[k]} 削弱 ×${NATURE_MULT.down}`}">−</button>
+        </span>
+      </div>
+      <div class="s-card-main">
+        <div class="s-vals">
+          <b class="s-panel">${b.panel}</b>
+          <span class="s-base">种族 <b>${b.baseStat}</b></span>
+        </div>
+        <button type="button" class="nat-ivbtn${st.iv > 0 ? ' on' : ''}" data-nat-ivbtn="${k}"
+          ${ivBlocked ? 'disabled' : ''}
+          title="${st.iv > 0 ? `取消 ${STAT_LABEL6[k]} 的个体投入` : ivBlocked ? '最多只能投入 3 项，请先取消一项' : `点一下投满 ${STAT_LABEL6[k]}（个体 ${IV_MAX}）`}">
+          <span class="iv-k">个体</span><span class="iv-v">${st.iv}</span>
+        </button>
+      </div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+/** 绑伤害计算两侧的六维卡片区 */
+function bindStatCards() {
+  for (const side of ['a', 'b']) {
+    const box = $(`.stat-cards[data-calc-side="${side}"]`);
+    if (!box || box.dataset.bound === '1') continue;
+    box.dataset.bound = '1';
+    const key = box.dataset.spirit;
+    const sp = STATE.bySpirit.get(key);
+    if (!sp) continue;
+    const c = withCalcSide(side, () => spiritCalcOf(sp));
+    const redraw = () => render();
+
+    for (const btn of box.querySelectorAll('[data-nat-btn]')) {
+      btn.addEventListener('click', () => {
+        const k = btn.dataset.natBtn;
+        const kind = btn.dataset.natKind;
+        const st = c.stats[k];
+        if (st.nature === kind) {
+          st.nature = 'neutral';
+        } else {
+          if (STAT_ORDER.some((x) => x !== k && c.stats[x].nature === kind)) {
+            toast(kind === 'up' ? '加成已经给了别的属性，请先取消那一项' : '削弱已经给了别的属性，请先取消那一项');
+            return;
+          }
+          if (st.nature === (kind === 'up' ? 'down' : 'up')) st.nature = 'neutral';
+          st.nature = kind;
+        }
+        redraw();
+      });
+    }
+    for (const btn of box.querySelectorAll('[data-nat-ivbtn]')) {
+      btn.addEventListener('click', () => {
+        const k = btn.dataset.natIvbtn;
+        const st = c.stats[k];
+        if (st.iv > 0) {
+          st.iv = 0;
+        } else {
+          if (STAT_ORDER.filter((x) => x !== k && c.stats[x].iv > 0).length >= 3) {
+            toast('最多只能投入 3 项，请先取消一项');
+            return;
+          }
+          st.iv = IV_MAX;
+        }
+        redraw();
+      });
+    }
+  }
+}
+
+/** 一侧的面板 + 技能选择。加点用与详情页同一套组件（个体按钮 + 性格逐项开关）
+ *  opts.atkKey：这一侧出招用的攻击项（没选技能时传 null，就不画攻击高亮）
+ *  opts.defKey：这一侧挨打看的防御项（对面没选技能时传 null） */
+function calcSide(side, sp, otherSp, opts = {}) {
   const c = STATE.calc;
   const isA = side === 'a';
   const skills = usableSkillsOf(sp);
@@ -986,9 +1080,9 @@ function calcSide(side, sp, otherSp) {
   const hp = isA ? c.hpA : c.hpB;
   // 这一侧自己的加点配置（与详情页、与另一侧都独立）
   const cfg = withCalcSide(side, () => spiritCalcOf(sp));
-  // 这一侧参与计算的两项：出招用攻（物攻/魔攻），挨打用防（物防/魔防）
-  const atkKey = (curSkill?.cat ?? '') === '魔法' ? 'satk' : 'patk';
-  const defKey = atkKey === 'satk' ? 'sdef' : 'pdef';
+  // 面板上画的攻/防项由外面算好（要看两侧的技能才知道）
+  const atkKey = opts.atkKey ?? null;
+  const defKey = opts.defKey ?? null;
   const ivOf1 = (k) => cfg.stats[k].iv;
   const natOf1 = (k) => cfg.stats[k].nature;
 
@@ -997,9 +1091,10 @@ function calcSide(side, sp, otherSp) {
     return `<option value="${s.id}"${s.id === curSkillId ? ' selected' : ''}>${esc(s.name)}${s.cat ? ` · ${esc(s.cat)}` : ''}${s.dmgMax ? ` · 威力${s.dmgMax}` : ''}${tag ? ` · ${tag}` : ''}</option>`;
   }).join('');
 
-  // 实时结果（这一侧打对面）
+  // 实时结果（这一侧打对面）。atkKey/defKey 都可能为 null（没选技能）——
+  // 此时对面也还没出招，本来就没有"挨打项"可用
   let result = '';
-  if (curSkill) {
+  if (curSkill && atkKey && defKey) {
     const r = calcDamage(sp, otherSp, curSkill, {
       level: c.level,
       atkIV: ivOf1(atkKey), atkNature: natOf1(atkKey),
@@ -1035,10 +1130,18 @@ function calcSide(side, sp, otherSp) {
 
     <div class="calc-row">
       <label>当前血量 <input type="number" id="chp-${side}" min="0" value="${hp || ''}" placeholder="${sp.stats.hp}" data-calc="hp" data-side="${side}"></label>
-      <span class="desc">出招看 <b>${STAT_LABEL6[atkKey]}</b>，挨打看 <b>${STAT_LABEL6[defKey]}</b></span>
     </div>
 
-    ${natalBlock(sp, cfg, { side, compact: true })}
+    <div class="calc-toolbar">
+      <span class="desc">个体上限 <b>${IV_MAX}</b>　最多投 <b>3 项</b></span>
+      <span class="calc-legend">
+        ${atkKey ? `<i class="lg-atk"></i>出招用 <b>${STAT_LABEL6[atkKey]}</b>` : '<span class="desc">选技能后显示出招用的属性</span>'}
+        ${defKey ? `<i class="lg-def"></i>挨打看 <b>${STAT_LABEL6[defKey]}</b>` : ''}
+      </span>
+      <button class="chip natal-reset" data-calc-reset="${side}">清空</button>
+    </div>
+
+    ${statCards(sp, cfg, { side, activeAtk: atkKey, activeDef: defKey })}
 
     ${result}
   </div>`;
@@ -1086,6 +1189,18 @@ function viewCalc() {
   const c = STATE.calc;
   const a = STATE.bySpirit.get(c.a) ?? STATE.data.spirits[0];
   const b = STATE.bySpirit.get(c.b) ?? STATE.data.spirits[0];
+
+  // 这一次参与计算的两项。没选技能就是 null（不高亮）——
+  // 不要 fallback 成物攻，否则会误导成"这一项在参与计算"。
+  const skA = c.skillA ? STATE.bySkill.get(c.skillA) : null;
+  const skB = c.skillB ? STATE.bySkill.get(c.skillB) : null;
+  const atkOf = (sk) => (sk ? ((sk.cat ?? '') === '魔法' ? 'satk' : 'patk') : null);
+  // 攻防对应：物攻打物防、魔攻打魔防。所以"我方出招用的攻"决定"对方挨打看的防"
+  const defAgainst = (atk) => (atk === null ? null : atk === 'satk' ? 'sdef' : 'pdef');
+  const aAtk = atkOf(skA);
+  const bAtk = atkOf(skB);
+  const bDef = defAgainst(aAtk);   // A 出招 -> 打的是 B 的这个防
+  const aDef = defAgainst(bAtk);   // B 出招 -> 打的是 A 的这个防
 
   // 排序模式：把攻击方(a)的全部技能按伤害从高到低排出来
   // 用攻击方自己的加点配置（与他打谁无关）
@@ -1146,11 +1261,11 @@ function viewCalc() {
     <div class="calc-two">
       <div class="calc-col">
         <div class="calc-who atk">攻击方 A</div>
-        ${calcSide('a', a, b)}
+        ${calcSide('a', a, b, { atkKey: aAtk, defKey: bDef })}
       </div>
       <div class="calc-col">
         <div class="calc-who def">防御方 B</div>
-        ${calcSide('b', b, a)}
+        ${calcSide('b', b, a, { atkKey: bAtk, defKey: aDef })}
       </div>
     </div>
     <div class="desc" style="margin-top:10px;font-size:12px">
@@ -1618,8 +1733,19 @@ function bindView() {
         }, 200));
       }
     }
-    // 两侧的加点面板（与详情页同一套组件）：绑事件
-    bindNatalBlock();
+    // 两侧的六维卡片区（与详情页同一套交互）
+    bindStatCards();
+    // 「清空」按钮：把该侧六项都清回初始
+    for (const btn of document.querySelectorAll('[data-calc-reset]')) {
+      btn.addEventListener('click', () => {
+        const side = btn.dataset.calcReset;
+        const sp = STATE.bySpirit.get(STATE.calc[side]);
+        if (!sp) return;
+        const c = withCalcSide(side, () => spiritCalcOf(sp));
+        for (const k of STAT_ORDER) c.stats[k] = { iv: 0, nature: 'neutral' };
+        render();
+      });
+    }
     // 伤害排序表里点一行 = 用那个技能
     for (const tr of document.querySelectorAll('[data-calc-pick]')) {
       tr.addEventListener('click', () => { STATE.calc.skillA = Number(tr.dataset.calcPick); render(); });
@@ -1739,16 +1865,15 @@ function natalBoxEl(scope) {
   return $('#modalBody')?.querySelector('.natal-block') ?? null;
 }
 
-/** 重画面板。scope 同 natalBoxEl；key 是 "id:form" */
-function redrawNatalBlock(key, scope) {
-  const box = natalBoxEl(scope);
+/** 重画弹窗里的加点面板（雷达图会跟着变）。key 是 "id:form" */
+function redrawNatalBlock(key) {
+  const box = natalBoxEl();
   if (!box) return;
   const sp = STATE.bySpirit.get(key);
   if (!sp) return;
-  const c = withCalcSide(scope ?? null, () => spiritCalcOf(sp));
-  box.outerHTML = natalBlock(sp, c, scope ? { side: scope, compact: true } : {});
-  const fresh = natalBoxEl(scope);
-  if (fresh) { delete fresh.dataset.bound; bindOneNatalBlock(fresh, scope); }
+  box.outerHTML = natalBlock(sp, spiritCalcOf(sp));
+  const fresh = natalBoxEl();
+  if (fresh) { delete fresh.dataset.bound; bindOneNatalBlock(fresh, undefined); }
 }
 
 /** 绑所有（弹窗 + 伤害计算两侧都可能存在）*/
@@ -1769,7 +1894,7 @@ function bindOneNatalBlock(box, scope) {
   const sp = STATE.bySpirit.get(key);
   if (!sp) return;
   const c = withCalcSide(scope ?? null, () => spiritCalcOf(sp));
-  const redraw = () => redrawNatalBlock(key, scope);
+  const redraw = () => redrawNatalBlock(key);
 
   // 性格开关：每项独立，但「性格+」整列最多一项、「性格−」整列最多一项
   // （一个性格 = 一项加成 + 一项削弱）。再点自己 = 取消。

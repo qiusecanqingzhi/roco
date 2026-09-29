@@ -504,6 +504,67 @@ table.matrix td {
 }
 .nat-line.combined .nat-ivbtn:disabled { opacity: .45; cursor: not-allowed; }
 
+/* 六维卡片区（伤害计算两侧）：3×2 网格 */
+.stat-cards {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px; margin-bottom: 10px;
+}
+.s-card {
+  min-width: 0; padding: 7px 9px 8px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+}
+/* 参与本次计算的两项：出招看的攻（橙）、挨打看的防（蓝） */
+.s-card.role-atk { border-color: #d98b2b; background: #d98b2b12; }
+.s-card.role-def { border-color: #4a7fd0; background: #4a7fd012; }
+.s-card.role-atk.role-def { border-color: #8a5fd0; background: #8a5fd012; }
+.s-card-top { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 3px; }
+.s-card-top .s-name {
+  display: flex; align-items: center; gap: 5px; min-width: 0;
+  font-size: 12px; color: var(--text-dim); white-space: nowrap;
+}
+.s-card-top .s-name .nat-ic { width: 15px; height: 15px; }
+.s-nats { display: flex; gap: 3px; }
+.s-nats .nat-btn {
+  padding: 0; width: 20px; height: 20px; line-height: 1; font-size: 13px;
+  border-radius: 5px; border: 1px solid var(--line); background: var(--bg-soft);
+  color: var(--text-faint); cursor: pointer;
+}
+.s-nats .nat-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.s-nats .nat-btn.up.on { background: #2f7d4a; color: #fff; border-color: #2f7d4a; font-weight: 700; }
+.s-nats .nat-btn.down.on { background: #8d3b34; color: #fff; border-color: #8d3b34; font-weight: 700; }
+.s-nats .nat-btn:disabled { opacity: .35; cursor: not-allowed; }
+.s-card-main { display: flex; align-items: flex-end; justify-content: space-between; gap: 6px; }
+.s-vals { display: flex; flex-direction: column; min-width: 0; }
+.s-vals .s-panel { font-size: 19px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.s-vals .s-base { font-size: 10px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.s-vals .s-base b { color: var(--text-dim); font-weight: 600; }
+.s-card .nat-ivbtn {
+  flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; line-height: 1.05;
+  padding: 3px 8px; font-size: 10px; cursor: pointer;
+  background: var(--bg-soft); color: var(--text-faint);
+  border: 1px solid var(--line); border-radius: 7px;
+}
+.s-card .nat-ivbtn .iv-v { font-size: 13px; font-weight: 700; color: var(--text-dim); }
+.s-card .nat-ivbtn:hover:not(:disabled) { border-color: var(--accent); }
+.s-card .nat-ivbtn.on { background: color-mix(in srgb, var(--accent) 26%, var(--card)); border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); }
+.s-card .nat-ivbtn.on .iv-v, .s-card .nat-ivbtn.on .iv-k { color: var(--text); }
+.s-card .nat-ivbtn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* 两侧工具栏：个体上限 + 图例 + 清空 */
+.calc-toolbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 8px; font-size: 12px;
+}
+.calc-toolbar .calc-legend { display: flex; align-items: center; gap: 5px; color: var(--text-dim); }
+.calc-toolbar .calc-legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.calc-toolbar .calc-legend i.lg-atk { background: #d98b2b; }
+.calc-toolbar .calc-legend i.lg-def { background: #4a7fd0; margin-left: 6px; }
+
+/* 窄屏：卡片退成两列 */
+@media (max-width: 560px) {
+  .stat-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 /* ------------------------------------------------------ 术语 */
 .glossary { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
 .gitem { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
