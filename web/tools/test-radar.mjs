@@ -426,6 +426,30 @@ ok(rankDmg[0] >= 327, `最高伤害 ≥ 327（实际 ${rankDmg[0]}）`);
   const afterSpd = api.withCalcSide('a', () => api.calcStatsOf(spClick, cfgClick).spd);
   ok(afterSpd > beforeSpd, `A 侧速度面板从 ${beforeSpd} 升到 ${afterSpd}`);
   ok(/预计伤害/.test(ids.get('app').innerHTML), '改完加点后结果区仍在');
+  // 点卡片区不该弹开详情弹窗（曾经容器带 data-spirit，点在卡片空白处就弹开了）。
+  // 注意：这里的判定依据是"弹窗内容被换成精灵详情"，而不是 modal.hidden（桩里默认 false）。
+  {
+    ids.get('modal').hidden = true;
+    ids.get('modalBody').innerHTML = '';
+    app2().querySelector('.stat-cards[data-calc-side="a"] .s-card').click();
+    ok(ids.get('modalBody').innerHTML === '', '点卡片本体不弹详情弹窗');
+    app2().querySelector('.calc-toolbar').click();
+    ok(ids.get('modalBody').innerHTML === '', '点工具栏不弹详情弹窗');
+    app2().querySelector('.stat-cards[data-calc-side="a"]').click();
+    ok(ids.get('modalBody').innerHTML === '', '点卡片区容器不弹详情弹窗');
+    // 对照：精灵图鉴的卡片必须还能点开详情（别把委托改坏了）
+    A2.view = 'spirits';
+    ids.get('app').innerHTML = '';
+    api.render();
+    const gridCard = ids.get('app')._el.querySelector('.card[data-spirit]');
+    ok(!!gridCard, '图鉴里有带 data-spirit 的卡片');
+    gridCard.click();
+    ok(ids.get('modalBody').innerHTML.length > 0, '点图鉴卡片仍能打开详情（事件委托没被改坏）');
+    ids.get('modalBody').innerHTML = '';
+    ids.get('modal').hidden = true;
+    A2.view = 'calc';
+    api.render();
+  }
   // 性格按钮的互斥规则在卡片区同样生效
   ok(app2().querySelector('.stat-cards[data-calc-side="a"] [data-nat-btn="hp"][data-nat-kind="up"]').disabled,
     '「+」列已被速度占用 -> 生命卡片的「+」被禁用');

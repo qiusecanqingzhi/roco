@@ -59,5 +59,33 @@ ok(env.document.querySelectorAll('.x').length === 2, `document.querySelectorAll 
 ok(env.document.getElementById('app') !== null, 'getElementById 可用');
 ok(env.document.querySelector('#app') !== null, 'querySelector #app 可用');
 
+// 事件要能沿 parentNode 冒泡到 document —— app.js 的全局事件委托（点击打开详情、
+// 筛选 chip 等）全靠它。起先桩里 document.addEventListener 是空函数，
+// 于是"点卡片区空白弹开详情弹窗"这种 bug 在测试里完全暴露不出来（踩过）。
+console.log('\n=== 事件冒泡到 document ===');
+{
+  let got = 0;
+  let seenTarget = null;
+  env.document.addEventListener('click', (e) => { got++; seenTarget = e.target; });
+  const btn = env.document.querySelectorAll('.x')[0];
+  btn.click();
+  ok(got >= 1, `点 #app 里的元素，document 上的 click 委托收到了（实际 ${got} 次）`);
+  ok(seenTarget === btn, 'e.target 是真正被点的那个节点');
+
+  // stopPropagation 要能拦住
+  let inner = 0;
+  let outer = 0;
+  const stopBtn = env.document.querySelectorAll('.x')[1];
+  stopBtn.addEventListener('click', (e) => { inner++; e.stopPropagation(); });
+  env.document.addEventListener('click', () => { outer++; });
+  const beforeInner = inner; const beforeOuter = outer;
+  stopBtn.click();
+  ok(inner === beforeInner + 1, '元素自己的监听先跑');
+  ok(outer === beforeOuter, 'stopPropagation 之后 document 不再收到');
+
+  // closest 要能沿祖先找（委托靠它）
+  ok(btn.closest('#app') === env.byId.get('app'), 'closest 能沿祖先找到 #app');
+}
+
 console.log(bad === 0 ? '\n✓ dom-stub 自检通过' : `\n✗ ${bad} 项不通过`);
 process.exit(bad ? 1 : 0);

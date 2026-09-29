@@ -162,10 +162,37 @@ export function makeNode(tag, attrs = {}) {
     node.children.push(child);
   };
   node.addEventListener = (ev, fn) => { const map = listeners.get(node) ?? {}; (map[ev] ??= []).push(fn); listeners.set(node, map); };
-  node.removeEventListener = () => {};
+  node.removeEventListener = (ev, fn) => {
+    const map = listeners.get(node);
+    if (!map || !map[ev]) return;
+    map[ev] = map[ev].filter((f) => f !== fn);
+  };
+  /**
+   * 派发事件。默认**沿 parentNode 一路冒泡到 document**，这样 app.js 里
+   * `document.addEventListener('click', …)` 那套事件委托才真的能被测到。
+   * （早先这里只跑当前节点自己的监听，document 上又是空函数，
+   *   于是"点图鉴卡片打开详情""点卡片区空白弹窗"这类 bug 全测不出来 —— 踩过。）
+   * stopPropagation() 生效：调用后不再往上冒。
+   */
   node.dispatch = (ev, extra = {}) => {
-    const map = listeners.get(node) ?? {};
-    for (const fn of map[ev] ?? []) fn({ target: node, currentTarget: node, preventDefault() {}, stopPropagation() {}, key: extra.key, ...extra });
+    let stopped = false;
+    const evt = {
+      target: node, currentTarget: node,
+      preventDefault() {}, stopPropagation() { stopped = true; },
+      key: extra.key, ...extra,
+    };
+    // 收集冒泡路径：自身 -> 祖先 -> … -> document（docRef 作为终点）
+    const path = [];
+    for (let p = node; p; p = p.parentNode) path.push(p);
+    if (docRef && !path.includes(docRef)) path.push(docRef);
+    for (const cur of path) {
+      const map = listeners.get(cur) ?? {};
+      for (const fn of [...(map[ev] ?? [])]) {
+        evt.currentTarget = cur;
+        fn(evt);
+      }
+      if (stopped) break;
+    }
   };
   node.click = () => node.dispatch('click');
   node.focus = () => { docRef?.setActive?.(node); };
@@ -287,18 +314,48 @@ export function makeEnv({ withBundle = true, bundle, fetchImpl } = {}) {
   modalPanel.children.push(byId.get('modalBody'));
   byId.get('modalBody').parentNode = modalPanel;
 
+  // 把其余节点也挂成树（真实 DOM 里它们都在 body 下）。
+  // 不挂的话 query('.modal-panel') 之类按类名的查找找不到 —— 而且事件冒泡会断在节点自己身上。
+  const searchWrap = byId.get('searchWrap');
+  if (searchWrap) {
+    searchWrap.children.push(byId.get('globalSearch'));
+    byId.get('globalSearch').parentNode = searchWrap;
+    searchWrap.children.push(byId.get('searchSuggest'));
+    byId.get('searchSuggest').parentNode = searchWrap;
+  }
+
+  // 真实 DOM 里这些节点都在 body 下、最终冒泡到 document。
+  // 桩里也要连成一条链，否则 dispatch 收集冒泡路径时会断在 #app 上，
+  // document 上的事件委托（点击打开详情等）永远收不到事件。
+  const body = makeNode('body');
+  for (const id of ['app', 'modal', 'tabs', 'searchWrap', 'themeBtn', 'toast', 'statLine']) {
+    const n = byId.get(id);
+    if (n) { body.children.push(n); n.parentNode = body; }
+  }
+  const html = makeNode('html');
+  html.children.push(body);
+  body.parentNode = html;
+
+  // document 也要能登记监听 —— app.js 的全局事件委托（click/keydown/input）都挂它上面。
+  // 起先这里是空函数，于是委托逻辑在测试里完全没跑过（点图鉴卡片打开详情之类测不出来）。
+  const docListeners = {};
   const document = {
-    body: makeNode('body'), documentElement: makeNode('html'), activeElement: null,
+    body, documentElement: html, activeElement: null,
     getElementById: (id) => byId.get(id) ?? null,
     querySelector: (sel) => (String(sel).startsWith('#') && !String(sel).includes(' ') && !String(sel).includes(',')
       ? byId.get(String(sel).slice(1)) ?? null
-      : query(makeNode('html'), sel)[0] ?? null),
-    querySelectorAll: (sel) => query(makeNode('html'), sel),
+      : query(html, sel)[0] ?? null),
+    querySelectorAll: (sel) => query(html, sel),
     createElement: (t) => makeNode(t),
-    addEventListener: () => {}, removeEventListener: () => {},
+    addEventListener: (ev, fn) => { (docListeners[ev] ??= []).push(fn); },
+    removeEventListener: (ev, fn) => { if (docListeners[ev]) docListeners[ev] = docListeners[ev].filter((f) => f !== fn); },
   };
   document.setActive = (n) => { document.activeElement = n; };
+  // 冒泡终点：dispatch 走到路径末端会查 listeners 表里 document 的监听
+  document.tagName = '#DOCUMENT';
+  document.parentNode = null;
   docRef = document;
+  listeners.set(document, docListeners);
 
   const win = {
     ROCO_DATA: null, location: { hash: '#/spirits', pathname: '/', search: '' },
@@ -310,19 +367,13 @@ export function makeEnv({ withBundle = true, bundle, fetchImpl } = {}) {
   };
   if (withBundle && bundle) win.ROCO_DATA = bundle;
 
-  // 让 document.querySelector(All) 能在整个 document 里找。
-  // 关键：必须把顶层元素真的挂进 virtualRoot.children —— 只设 parentNode
-  // 是不够的，因为 query() 是顺着 children 向下遍历的（踩过）。
-  const virtualRoot = makeNode('html');
-  for (const n of byId.values()) {
-    if (n.parentNode) continue;
-    n.parentNode = virtualRoot;
-    virtualRoot.children.push(n);
-  }
-  document.querySelectorAll = (sel) => query(virtualRoot, sel);
+  // 现在只有一棵树：html > body > （#app / #modal / …）。
+  // document.querySelector(All) 就走这棵树 —— 不再另建 virtualRoot
+  // （两棵树会让 document 查不到 #app 里的元素，而且事件冒泡也只认其中一棵）。
+  document.querySelectorAll = (sel) => query(html, sel);
   document.querySelector = (sel) => {
     if (String(sel).startsWith('#') && !String(sel).includes(' ')) return byId.get(String(sel).slice(1)) ?? null;
-    return query(virtualRoot, sel)[0] ?? null;
+    return query(html, sel)[0] ?? null;
   };
 
   const errors = [];
@@ -336,7 +387,7 @@ export function makeEnv({ withBundle = true, bundle, fetchImpl } = {}) {
   };
   sandbox.globalThis = sandbox;
   sandbox.self = sandbox;
-  return { sandbox, window: win, document, byId, errors, root: virtualRoot };
+  return { sandbox, window: win, document, byId, errors, root: html };
 }
 
 /** 造一个 app.js 用的元素（给需要先造节点再塞进树里的场景）*/

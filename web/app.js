@@ -312,7 +312,7 @@ function natalBlock(sp, c) {
   }).join('');
 
   // compact：伤害计算两侧用的紧凑版 —— 去掉雷达图与重复的数值条
-  return `<div class="natal-block" data-natal-block="1" data-spirit="${sp.id}:${sp.formId}">
+  return `<div class="natal-block" data-natal-block="1" data-calc-spirit="${sp.id}:${sp.formId}">
     <div class="stat-wrap">
       ${radarChart(vals)}
       <div class="stat-bars">${bars}</div>
@@ -975,7 +975,7 @@ function statCards(sp, c, opts = {}) {
   const upKey = STAT_ORDER.find((k) => c.stats[k].nature === 'up') ?? null;
   const downKey = STAT_ORDER.find((k) => c.stats[k].nature === 'down') ?? null;
 
-  return `<div class="stat-cards" data-stat-cards="1" data-calc-side="${opts.side ?? ''}" data-spirit="${sp.id}:${sp.formId}">${STAT_ORDER.map((k) => {
+  return `<div class="stat-cards" data-stat-cards="1" data-calc-side="${opts.side ?? ''}" data-calc-spirit="${sp.id}:${sp.formId}">${STAT_ORDER.map((k) => {
     const st = c.stats[k];
     const b = statBreakdown(k, sp.stats[k] ?? 0, st.iv, st.nature);
     const isUp = upKey === k;
@@ -1021,7 +1021,7 @@ function bindStatCards() {
     const box = $(`.stat-cards[data-calc-side="${side}"]`);
     if (!box || box.dataset.bound === '1') continue;
     box.dataset.bound = '1';
-    const key = box.dataset.spirit;
+    const key = box.dataset.calcSpirit;
     const sp = STATE.bySpirit.get(key);
     if (!sp) continue;
     const c = withCalcSide(side, () => spiritCalcOf(sp));
@@ -1883,7 +1883,7 @@ function bindNatalBlock() {
 function bindOneNatalBlock(box, scope) {
   if (!box || box.dataset.bound === '1') return;
   box.dataset.bound = '1';
-  const key = box.dataset.spirit;
+  const key = box.dataset.calcSpirit;
   const sp = STATE.bySpirit.get(key);
   if (!sp) return;
   const c = withCalcSide(scope ?? null, () => spiritCalcOf(sp));
