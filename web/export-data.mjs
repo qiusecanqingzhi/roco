@@ -74,6 +74,7 @@ if (!fs.existsSync(cfg.db)) {
 const db = new DatabaseSync(cfg.db);
 const rows = (sql, ...p) => db.prepare(sql).all(...p).map((r) => Object.assign({}, r));
 const L = cfg.locale;
+const SRC = path.join('out', L);
 const localeOf = (extra = '') => `locale = '${L.replace(/'/g, "''")}'${extra ? ' AND ' + extra : ''}`;
 
 const dbLocale = rows(`SELECT DISTINCT locale FROM spirit`).map((r) => r.locale);
@@ -297,7 +298,25 @@ const glossary = rows('SELECT * FROM glossary WHERE locale = ? ORDER BY note_id'
   id: g.note_id, name: g.note, desc: g.description, descPlain: plainText(g.description),
   skills: g.used_by_skills ? g.used_by_skills.split(' / ').filter(Boolean) : [],
   n: g.used_by_skill_count,
+  // icon_key 是上游给这批词条的稳定标识（如 poison / starfall-mark）。
+  // 上游的 picture 字段全是 null，所以没有图标图可下载 —— 前端用分类色标区分。
+  key: g.icon_key || '',
 }));
+
+/**
+ * 状态与印记数据集（out/<locale>/status.jsonl）。
+ * 由 tools/build-status-data.mjs 从【本项目的术语库】生成 —— 不引用任何第三方整理的数据。
+ * 文件不存在时不报错，只是不导出（老数据/新克隆也能跑通）。
+ */
+let statuses = [];
+{
+  const p = path.join(SRC, 'status.jsonl');
+  if (fs.existsSync(p)) {
+    statuses = fs.readFileSync(p, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  } else {
+    console.warn('⚠ 没有 out/<locale>/status.jsonl —— 先跑 node tools/build-status-data.mjs');
+  }
+}
 
 // 六维图标：站点把它当 CSS mask 用（透明底 + 白色字形），颜色由页面自己染，
 // 所以这里只传 URL 与顺序，前端用 mask-image 渲染。
@@ -305,6 +324,20 @@ const statIcons = rows('SELECT * FROM stat_icons WHERE locale = ? ORDER BY displ
   const online = x.image_url || null;
   return { stat: x.stat, label: x.label, order: x.display_order, icon: assetName(online), iconOnline: online };
 });
+
+/**
+ * 状态分类的中文名 + 配色。分类由 tools/build-status-data.mjs 按词条语义判定。
+ * 颜色只是界面辅助，与数据本身无关。
+ */
+const STATUS_KINDS = {
+  mark: { label: '印记', color: '#8a5fd0', desc: '下场不消失，新入场的精灵继承' },
+  weather: { label: '天气', color: '#3f8fbf', desc: '影响双方' },
+  status: { label: '状态', color: '#c05a4a', desc: '回合结算或限制行动' },
+  buff: { label: '增益 / 减益', color: '#4a9a5f', desc: '属性与效果的统称' },
+  counter: { label: '应对', color: '#c97917', desc: '条件触发，必定先手' },
+  leave: { label: '离场', color: '#6d7f95', desc: '更换入场精灵' },
+  mechanic: { label: '机制', color: '#7a7f8a', desc: '通用规则与术语' },
+};
 
 db.close();
 
@@ -320,12 +353,14 @@ const meta = {
   counts: {
     spirits: spirits.length, skills: skills.length, spiritSkills: ssRows.length,
     learners: learnerRows.length, types: types.length, matchups: matchups.length,
-    teams: teams.length, glossary: glossary.length,
+    teams: teams.length, glossary: glossary.length, statuses: statuses.length,
   },
   origin: ORIGIN,
   types,
   statIcons,
   skillIcons,
+  // 状态分类的中文名与配色（前端用来分组与上色）
+  statusKinds: STATUS_KINDS,
   // 血脉元数据（按 bloodline_id 索引）：名称/图标/秘药；避免每行重复存
   bloodlines: Object.fromEntries(bloodlineMeta),
   // 血脉技能的图标（按 skill_id 索引）
@@ -345,6 +380,7 @@ writeJson(path.join(cfg.out, 'skills.json'), skills);
 writeJson(path.join(cfg.out, 'matchups.json'), matchups);
 writeJson(path.join(cfg.out, 'teams.json'), teams);
 writeJson(path.join(cfg.out, 'glossary.json'), glossary);
+writeJson(path.join(cfg.out, 'statuses.json'), statuses);
 writeJson(path.join(cfg.out, 'spirit-skills.json'), spiritSkillMap);
 writeJson(path.join(cfg.out, 'skill-learners.json'), learnerMap);
 const bloodlineMap = {};
@@ -353,7 +389,7 @@ writeJson(path.join(cfg.out, 'spirit-bloodlines.json'), bloodlineMap);
 
 // 单文件包：给 file:// 直接双击打开用（浏览器不允许 file:// 下 fetch 本地 JSON）
 const bundle = {
-  meta, spirits, skills, matchups, teams, glossary,
+  meta, spirits, skills, matchups, teams, glossary, statuses,
   spiritSkills: spiritSkillMap, skillLearners: learnerMap, spiritBloodlines: bloodlineMap,
 };
 const bundlePath = path.join(cfg.assetsDir, 'data-bundle.js');

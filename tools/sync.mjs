@@ -88,6 +88,11 @@ if (changed && !opt.offline) {
 }
 
 /* ------------------------------------------------ 4) 导出网页数据 */
+// 先由术语库生成状态集（out/<locale>/status.jsonl），export-data 会读它。
+// 放在导出之前，否则状态面板的数据会缺。
+log('\n· 生成状态数据');
+run('node', ['tools/build-status-data.mjs'], { ROCO_LOCALE: opt.locale });
+
 log('\n· 导出网页数据');
 run('node', ['web/export-data.mjs', '--db', opt.db, '--locale', opt.locale]);
 
@@ -115,8 +120,12 @@ log('  ' + JSON.stringify(summary.counts));
 writeOutputs(summary);
 
 /* ------------------------------------------------ 工具 */
-function run(cmd, argv) {
-  const r = spawnSync(cmd, argv, { stdio: opt.quiet ? 'pipe' : 'inherit', env: process.env, shell: false });
+function run(cmd, argv, extraEnv) {
+  const r = spawnSync(cmd, argv, {
+    stdio: opt.quiet ? 'pipe' : 'inherit',
+    env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
+    shell: false,
+  });
   if (r.error) throw r.error;
   if (r.status !== 0) throw new Error(`${cmd} ${argv.join(' ')} 失败（退出码 ${r.status}）`);
 }

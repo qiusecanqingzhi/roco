@@ -578,7 +578,91 @@ console.log('\n· 四技能槽 + 伤害占比');
     '把四招都删掉后是四个空位（不会又自动填回来）');
 }
 
-/* ---------------------------------------------------------- 性格 · 天分 */
+/* ---------------------------------------------------------- 状态面板 */
+console.log('\n· 状态面板');
+{
+  ok(api.STATE.statuses.length === 54, `状态数据集 54 条（实际 ${api.STATE.statuses.length}）`);
+  const kinds = A2.data.meta.statusKinds ?? {};
+  ok(Object.keys(kinds).length >= 6, `分类至少 6 种（实际 ${Object.keys(kinds).length}）`);
+  const mark = api.STATE.statuses.filter((s) => s.kind === 'mark');
+  ok(mark.length === 15, `印记 15 条（实际 ${mark.length}）`);
+  ok(mark.some((s) => s.name === '星陨印记'), '印记里有星陨印记');
+  ok(api.STATE.statuses.every((s) => s.name && s.desc), '每条都有名称与描述（描述已去掉标记）');
+  ok(!api.STATE.statuses.some((s) => /<[^>]+>/.test(s.desc)), '描述里没有残留的 <> 标记');
+
+  A2.calc.a = '20:1'; A2.calc.b = '43:1'; A2.calc.skillA = 7150060;
+  A2.calc.statusA = { picks: [], star: 0 }; A2.calc.statusB = { picks: [], star: 0 };
+  A2.calc.modsA = { patkPct: 0, satkPct: 0, powerPct: 0, powerAdd: 0, finalPct: 100 };
+  A2.calc.modsB = { patkPct: 0, satkPct: 0, powerPct: 0, powerAdd: 0, finalPct: 100 };
+  A2.calc.hpPctA = 100; A2.calc.hpPctB = 100;
+  A2.view = 'calc';
+  ids.get('app').innerHTML = '';
+  api.render();
+
+  const appS = () => ids.get('app')._el;
+  ok(!!appS().querySelector('.calc-status'), '伤害计算页有「状态」区块');
+  ok(appS().querySelectorAll('.st-side').length === 2, '状态区块分两侧');
+  ok(appS().querySelectorAll('[data-st-mod]').length === 10, '两侧各 5 个攻击因子（共 10）');
+  ok(appS().querySelectorAll('[data-st-hp]').length === 2, '两侧各一条血量滑块');
+  ok(appS().querySelectorAll('[data-st-star]').length === 2, '两侧各一个星陨层数');
+  ok(appS().querySelectorAll('[data-st-pick]').length === 54 * 2, `两侧共 108 个状态可选按钮（实际 ${appS().querySelectorAll('[data-st-pick]').length}）`);
+
+  // 点一个状态 -> 出现卡片
+  appS().querySelector('[data-st-pick="a:starfall-mark"]').click();
+  ok(A2.calc.statusA.picks.includes('starfall-mark'), '点一下把星陨印记加进我方');
+  const card = appS().querySelector('.st-card');
+  ok(!!card, '选中后出现状态卡片');
+  ok(/星陨印记/.test(card.innerHTML) && /幻系伤害/.test(card.innerHTML), '卡片里有名称与描述');
+  ok(/被 \d+ 个技能引用/.test(card.innerHTML), '卡片里标了引用技能数');
+  // 再点一次取消
+  appS().querySelector('[data-st-pick="a:starfall-mark"]').click();
+  ok(!A2.calc.statusA.picks.includes('starfall-mark'), '再点一次取消选中');
+
+  // 攻击因子真的进伤害计算：物攻% 影响物攻类技能，魔攻% 不影响
+  const spS = A2.bySpirit.get(A2.calc.a);
+  const defS = A2.bySpirit.get(A2.calc.b);
+  const skS = A2.bySkill.get(7150060);            // 扇风：物理
+  ok(skS.cat === '物理', '拿来做对照的技能是物理类');
+  const base = api.calcDamage(spS, defS, skS, { level: 60, flatAdd: 20, skillPct: 0.5 });
+  const withPatk = api.calcDamage(spS, defS, skS, {
+    level: 60, flatAdd: 20, skillPct: 0.5,
+    mods: { patkPct: 50, satkPct: 0, powerPct: 0, powerAdd: 0, finalPct: 100 },
+  });
+  const withSatk = api.calcDamage(spS, defS, skS, {
+    level: 60, flatAdd: 20, skillPct: 0.5,
+    mods: { patkPct: 0, satkPct: 50, powerPct: 0, powerAdd: 0, finalPct: 100 },
+  });
+  ok(withPatk.dmg > base.dmg, `物攻+50% 让物攻技能伤害变高（${base.dmg} -> ${withPatk.dmg}）`);
+  ok(withSatk.dmg === base.dmg, '魔攻+50% 不影响物攻技能（物理/魔法各走各的）');
+  const withPower = api.calcDamage(spS, defS, skS, {
+    level: 60, flatAdd: 20, skillPct: 0.5,
+    mods: { patkPct: 0, satkPct: 0, powerPct: 0, powerAdd: 20, finalPct: 100 },
+  });
+  ok(withPower.dmg > base.dmg, `技能威力+20 让伤害变高（${base.dmg} -> ${withPower.dmg}）`);
+  const withFinal = api.calcDamage(spS, defS, skS, {
+    level: 60, flatAdd: 20, skillPct: 0.5,
+    mods: { patkPct: 0, satkPct: 0, powerPct: 0, powerAdd: 0, finalPct: 150 },
+  });
+  ok(withFinal.dmg > base.dmg, `独立乘区 150% 让伤害变高（${base.dmg} -> ${withFinal.dmg}）`);
+  ok(!api.calcDamage(spS, defS, skS, { mods: null }).dmg !== base.dmg, '不传 mods 时行为不变（基准一致）');
+
+  // 血量滑块
+  const hp = appS().querySelector('[data-st-hp="a"]');
+  hp.value = '40';
+  hp.dispatch('input');
+  ok(A2.calc.hpPctA === 40, '拖血量滑块会写进状态');
+
+  // 重置
+  A2.calc.statusA = { picks: ['starfall-mark'], star: 3 };
+  A2.calc.modsA.patkPct = 30;
+  ids.get('app').innerHTML = '';
+  api.render();
+  appS().querySelector('[data-st-reset]').click();
+  ok(A2.calc.statusA.picks.length === 0 && A2.calc.statusA.star === 0 && A2.calc.modsA.patkPct === 0,
+    '「重置」清掉状态、层数与攻击因子');
+  ok(A2.calc.hpPctA === 100, '「重置」把血量回到 100%');
+}
+
 // 性格表源自 BiliWiki：30 种，每种 +1 项 / -1 项，每项属性当"增""减"各 5 次。
 // 修正系数 ±10%，且本作生命也受性格影响（与宝可梦不同）。
 console.log('\n· 性格 · 天分 · 资质');

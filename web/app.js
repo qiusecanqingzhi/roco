@@ -90,6 +90,12 @@ const STATE = {
     // 只在第一次渲染时按伤害自动填；用户手动删空后不会又被填回来。
     // 换精灵时把对应那一侧重置为 false，让它对新精灵重新自动填。
     loInitA: false, loInitB: false,
+    // 状态面板：每侧选中的状态 key、可调攻击因子、血量百分比、星陨层数。
+    // 攻击因子会真正进入伤害计算（见 calcDamage 的 mods 参数）。
+    statusA: { picks: [], star: 0 }, statusB: { picks: [], star: 0 },
+    modsA: { patkPct: 0, satkPct: 0, powerPct: 0, powerAdd: 0, finalPct: 100 },
+    modsB: { patkPct: 0, satkPct: 0, powerPct: 0, powerAdd: 0, finalPct: 100 },
+    hpPctA: 100, hpPctB: 100,
     level: 60,
     // 与官方说明页算例同参数：(75 + 20) × (1 + 50%) = 142.5 -> 显示威力 356 -> 伤害 332
     flatAdd: 20, skillPct: 0.5, atkStage: 0, defStage: 0,
@@ -127,6 +133,9 @@ function index(data) {
   for (const s of data.skills) STATE.bySkill.set(s.id, s);
   for (const t of data.meta.types) STATE.typeById.set(t.id, t);
   STATE.glossaryById = new Map((data.glossary ?? []).map((g) => [g.id, g]));
+  // 状态与印记（由 tools/build-status-data.mjs 从本项目的术语库生成）
+  STATE.statuses = data.statuses ?? [];
+  STATE.statusByKey = new Map(STATE.statuses.map((s) => [s.key, s]));
   STATE.statIconByStat = new Map((data.meta.statIcons ?? []).map((x) => [x.stat, x]));
   STATE.skillIconById = new Map(data.meta.skillIcons ?? []);
   // 伤害计算用：系别名 -> 系别，以及 "攻:防" -> 克制级别
@@ -916,6 +925,8 @@ function calcDamage(atkSp, defSp, sk, opts = {}) {
   const powerMul = opts.powerMul ?? 1;
   const finalMul = opts.finalMul ?? 1;
   const random = opts.random ?? 1;
+  // 状态面板的攻击因子（可选）：本侧加成与对面削减都在这里汇合
+  const mods = opts.mods ?? null;
 
   const isPhysical = (sk?.cat ?? '') === '物理';
   const isStatus = (sk?.cat ?? '') === '状态';
@@ -925,13 +936,19 @@ function calcDamage(atkSp, defSp, sk, opts = {}) {
   // 基础威力：opts.power 允许覆盖（四技能槽里可以把某一招的威力改成别的值，
   // 比如把固定伤害技按实际威力填）。不传就用技能自身的基础威力 damage[0]。
   const basePower = opts.power ?? sk?.dmgMax ?? 0;
-  const atkStat = panelOf(atkSp, atkKey, atkIV, atkNature);
+  // 面板值先算出来，再叠状态里的"物攻%/魔攻%"加成（只影响参与计算的那一项）
+  const rawAtkStat = panelOf(atkSp, atkKey, atkIV, atkNature);
+  const modAtkPct = mods ? (atkKey === 'patk' ? (mods.patkPct ?? 0) : (mods.satkPct ?? 0)) : 0;
+  const atkStat = Math.round(rawAtkStat * (1 + modAtkPct / 100));
   const defStat = panelOf(defSp, defKey, defIV, defNature);
 
   // 攻防等级：攻击提升和防御下降都在分子，攻击下降和防御提升都在分母
   const atkZone = ((1 + atkStage) / (1 + defStage)) || 1;
 
-  const effective = (basePower + flatAdd) * (1 + skillPct);
+  // 技能威力：先加固定值，再按百分比放大；状态里的"技能威力"两项就作用在这里
+  const modPowerAdd = mods?.powerAdd ?? 0;
+  const modPowerPct = mods?.powerPct ?? 0;
+  const effective = (basePower + flatAdd + modPowerAdd) * (1 + skillPct + modPowerPct / 100);
   // 本系加成：技能的系别 id 出现在自身系别里（spirit.types 是 id 数组）
   const stab = (atkSp.types ?? []).includes(sk?.typeId) ? 1.25 : 1;
   const typeEff = typeEffect(sk?.typeId, defSp.types ?? []);
@@ -939,7 +956,9 @@ function calcDamage(atkSp, defSp, sk, opts = {}) {
 
   const lvCoef = levelCoef(level);
   const inner = Math.round(atkStat * shown * lvCoef);
-  const dmg = isStatus ? 0 : Math.floor((inner / defStat) * finalMul * random);
+  // 独立乘区：状态里给的是百分数（100 = 不变），换算成倍率
+  const modFinal = mods ? (mods.finalPct ?? 100) / 100 : 1;
+  const dmg = isStatus ? 0 : Math.floor((inner / defStat) * finalMul * modFinal * random);
 
   const targetHp = opts.targetHp ?? defSp.stats.hp;
   const hits = dmg > 0 ? Math.ceil(targetHp / dmg) : Infinity;
@@ -948,6 +967,7 @@ function calcDamage(atkSp, defSp, sk, opts = {}) {
     basePower, flatAdd, skillPct, effective, atkStat, defStat, atkKey, defKey, isPhysical, isStatus,
     stab, typeEff, atkZone, powerMul, shown, lvCoef, level, inner, finalMul, random, dmg,
     targetHp, hits, pct: targetHp > 0 ? dmg / targetHp : 0,
+    modAtkPct, modPowerAdd, modPowerPct, modFinal,
   };
 }
 
@@ -1189,6 +1209,8 @@ function loadoutDamage(side, sp, otherSp) {
         atkStage: c.atkStage, defStage: c.defStage,
         powerMul: c.powerMul, finalMul: c.finalMul,
         targetHp,
+        // 状态面板里的攻击因子：出招这一侧的加成
+        mods: side === 'a' ? c.modsA : c.modsB,
       }).dmg;
     }
     const total = dmg * hit;
@@ -1196,6 +1218,151 @@ function loadoutDamage(side, sp, otherSp) {
     rows.push({ i, sk, pow, hit, dmg, total });
   });
   return { rows, sum };
+}
+
+/** 「？异常与印记」说明：把状态面板里的数据集按分类摊开 */
+function statusHelpDialog() {
+  const kinds = STATE.data.meta.statusKinds ?? {};
+  const body = Object.entries(kinds).map(([kind, meta]) => {
+    const list = STATE.statuses.filter((s) => s.kind === kind);
+    if (!list.length) return '';
+    return `<div class="section"><h3><span class="st-tag" style="--c:${meta.color}">${esc(meta.label)}</span> ${esc(meta.desc)} <span class="n">${list.length} 条</span></h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>名称</th><th>效果</th><th class="num">引用技能</th></tr></thead>
+        <tbody>${list.map((s) => `<tr>
+          <td><b>${esc(s.name)}</b></td>
+          <td class="desc">${esc(s.desc)}</td>
+          <td class="num">${s.n}</td>
+        </tr>`).join('')}</tbody>
+      </table></div></div>`;
+  }).join('');
+  openModal(`<div class="modal-body">
+    <h2>异常与印记</h2>
+    <p class="desc" style="margin:6px 0 12px">
+      共 ${STATE.statuses.length} 条，来自本项目的术语库（上游 description_notes）。
+      「印记」下场不会消失、由新入场的精灵继承，最多同时拥有 1 种正面 + 1 种负面印记。
+    </p>
+    ${body}
+  </div>`);
+}
+
+/**
+ * 状态面板：两侧各一栏，显示【当前选中的状态/印记】与【可调的攻击因子】。
+ *
+ * 数据来自本项目自己的术语库（out/<locale>/status.jsonl，由 tools/build-status-data.mjs
+ * 从 roco.world 的 description_notes 抽取），不依赖任何第三方整理的数据。
+ *
+ * 每侧的结构（参考对战模拟器"状态"区的组织方式，界面为本项目自己实现）：
+ *   ① 当前生效的状态卡片（名称 / 分类 / 描述 / 生效开关）
+ *   ② 一组"攻击因子"：物攻% 魔攻% 技能威力% 技能威力值 独立乘区%
+ *      这些会真正进入伤害计算（见 calcDamage 的 mods）
+ *   ③ 血量条：当前血量 / 总血量 + 百分比滑块
+ *   ④ 星陨印记层数：每层带来的伤害（幻系额外伤害按层数累加）
+ */
+function sideStatusPanel(side, sp) {
+  const c = STATE.calc;
+  const isA = side === 'a';
+  const st = isA ? c.statusA : c.statusB;
+  const mods = isA ? c.modsA : c.modsB;
+  const hpPct = isA ? c.hpPctA : c.hpPctB;
+  const hpNow = isA ? c.hpA : c.hpB;
+  const hpMax = sp.stats.hp ?? 0;
+  const cur = hpNow || Math.round((hpMax * hpPct) / 100);
+  const kinds = STATE.data.meta.statusKinds ?? {};
+  const picked = st.picks ?? [];
+
+  // 已选中的状态（官方规则：最多同时 1 种正面印记 + 1 种负面印记，这里不强行限制种类）
+  const chosen = picked.map((k) => STATE.statusByKey.get(k)).filter(Boolean);
+  const picksHtml = chosen.length
+    ? chosen.map((s) => {
+      const k = kinds[s.kind] ?? { label: s.kind, color: '#7a7f8a' };
+      return `<div class="st-card" data-st-key="${s.key}">
+        <div class="st-card-main">
+          <span class="st-tag" style="--c:${k.color}">${esc(k.label)}</span>
+          <b>${esc(s.name)}</b>
+          <button type="button" class="st-drop" data-st-drop="${side}:${s.key}" title="移除">×</button>
+        </div>
+        <div class="desc">${esc(s.desc)}</div>
+        ${s.n ? `<div class="desc st-used">被 ${s.n} 个技能引用：${s.usedBy.slice(0, 6).map(esc).join('、')}${s.usedBy.length > 6 ? '…' : ''}</div>` : ''}
+      </div>`;
+    }).join('')
+    : '<div class="st-empty">还没有选状态 —— 从下面按分类挑</div>';
+
+  // 可选状态：按分类分组
+  const pickHtml = Object.keys(kinds).length
+    ? Object.entries(kinds).map(([kind, meta]) => {
+      const list = STATE.statuses.filter((s) => s.kind === kind);
+      if (!list.length) return '';
+      return `<div class="st-group">
+        <div class="st-group-head"><span class="st-tag" style="--c:${meta.color}">${esc(meta.label)}</span>
+          <span class="desc">${esc(meta.desc)}</span></div>
+        <div class="st-chips">${list.map((s) => `<button type="button" class="st-chip${picked.includes(s.key) ? ' on' : ''}"
+          data-st-pick="${side}:${s.key}" title="${esc(s.desc)}">${esc(s.name)}</button>`).join('')}</div>
+      </div>`;
+    }).join('')
+    : '';
+
+  // 攻击因子（真正进伤害计算）
+  const MOD_FIELDS = [
+    ['patkPct', '物攻', '%'], ['satkPct', '魔攻', '%'],
+    ['powerAdd', '技能威力', '+'], ['powerPct', '技能威力', '%'],
+    ['finalPct', '独立乘区', '%'],
+  ];
+  const modHtml = MOD_FIELDS.map(([key, label, unit]) => {
+    const v = mods[key] ?? (key === 'finalPct' ? 100 : 0);
+    return `<label class="st-mod" title="会进入伤害计算">
+      <span class="st-mod-k">${label}</span>
+      <input type="number" step="5" value="${v}" data-st-mod="${side}:${key}" aria-label="${label}${unit === '%' ? '百分比' : '加点'}">
+      <span class="st-mod-u">${unit === '%' ? '%' : ''}</span>
+    </label>`;
+  }).join('');
+
+  return `<div class="st-side" data-st-side="${side}">
+    <div class="st-side-head">
+      <span class="cn">${esc(sp.name)}</span>
+      <span class="desc">${isA ? '我方' : '对方'}</span>
+    </div>
+
+    <div class="st-picks">${picksHtml}</div>
+
+    <div class="st-mods">${modHtml}</div>
+
+    <div class="st-hp">
+      <div class="st-hp-head">
+        <span>${isA ? '我方' : '对方'}当前血量</span>
+        <b>${hpPct}% <span class="desc">${cur}/${hpMax}</span></b>
+      </div>
+      <input type="range" min="0" max="100" value="${hpPct}" data-st-hp="${side}" aria-label="当前血量百分比">
+      <div class="st-hp-bar"><i style="width:${hpPct}%"></i></div>
+    </div>
+
+    <div class="st-star">
+      <div class="st-hp-head">
+        <span>${isA ? '我方' : '对方'}被附加星陨 <b>${st.star ?? 0}</b> 层</span>
+        <input type="number" min="0" max="9" value="${st.star ?? 0}" data-st-star="${side}" aria-label="星陨层数">
+      </div>
+      <div class="desc">使用非幻系技能攻击持有该印记的精灵时，消耗全部层数造成额外幻系伤害（幻系精灵不会获得）</div>
+    </div>
+
+    <div class="st-picker">${pickHtml}</div>
+  </div>`;
+}
+
+/** 状态面板（伤害计算页） */
+function statusPanel(a, b) {
+  return `<section class="calc-status" aria-label="状态">
+    <div class="calc-status-head">
+      <h3>状态</h3>
+      <div class="calc-status-actions">
+        <button type="button" class="chip" data-st-reset="1">重置</button>
+        <button type="button" class="chip" data-st-help="1" title="各状态与印记的含义">？异常与印记</button>
+      </div>
+    </div>
+    <div class="calc-status-body">
+      ${sideStatusPanel('a', a)}
+      ${sideStatusPanel('b', b)}
+    </div>
+  </section>`;
 }
 
 /**
@@ -1287,6 +1454,8 @@ function calcSide(side, sp, otherSp, opts = {}) {
       atkStage: c.atkStage, defStage: c.defStage,
       powerMul: c.powerMul, finalMul: c.finalMul,
       targetHp: isA ? (c.hpB || otherSp.stats.hp) : (c.hpA || otherSp.stats.hp),
+      // 状态面板里的攻击因子：出招这一侧的加成
+      mods: isA ? c.modsA : c.modsB,
     });
     result = calcResultBlock(side, sp, otherSp, curSkill, r);
   }
@@ -1441,6 +1610,8 @@ function viewCalc() {
       ${skillLoadout('a', a, b)}
       ${skillLoadout('b', b, a)}
     </div>
+
+    ${statusPanel(a, b)}
 
     <div class="desc" style="margin-top:10px;font-size:12px">
       说明：① 有效威力 = (基础威力 + 固定加威力) × (1 + 本次技能威力%)；
@@ -1961,6 +2132,66 @@ function bindView() {
         render();
       });
     }
+
+    // 状态面板：选中 / 移除状态
+    for (const btn of document.querySelectorAll('[data-st-pick]')) {
+      btn.addEventListener('click', () => {
+        const [side, key] = btn.dataset.stPick.split(':');
+        const st = side === 'a' ? STATE.calc.statusA : STATE.calc.statusB;
+        st.picks = st.picks.includes(key) ? st.picks.filter((x) => x !== key) : [...st.picks, key];
+        render();
+      });
+    }
+    for (const btn of document.querySelectorAll('[data-st-drop]')) {
+      btn.addEventListener('click', () => {
+        const [side, key] = btn.dataset.stDrop.split(':');
+        const st = side === 'a' ? STATE.calc.statusA : STATE.calc.statusB;
+        st.picks = st.picks.filter((x) => x !== key);
+        render();
+      });
+    }
+    // 状态面板：攻击因子（会进伤害计算，所以改完要重算）
+    for (const el of document.querySelectorAll('[data-st-mod]')) {
+      el.addEventListener('change', () => {
+        const [side, key] = el.dataset.stMod.split(':');
+        const mods = side === 'a' ? STATE.calc.modsA : STATE.calc.modsB;
+        let v = Number(el.value);
+        if (!Number.isFinite(v)) v = key === 'finalPct' ? 100 : 0;
+        if (key === 'finalPct') v = Math.max(0, v);
+        mods[key] = Math.round(v);
+        render();
+      });
+    }
+    // 状态面板：血量百分比
+    for (const el of document.querySelectorAll('[data-st-hp]')) {
+      el.addEventListener('input', () => {
+        const side = el.dataset.stHp;
+        const v = Math.max(0, Math.min(100, Number(el.value) || 0));
+        if (side === 'a') { STATE.calc.hpPctA = v; STATE.calc.hpA = v; } else { STATE.calc.hpPctB = v; STATE.calc.hpB = v; }
+        softRerender('calc');
+      });
+    }
+    // 状态面板：星陨层数
+    for (const el of document.querySelectorAll('[data-st-star]')) {
+      el.addEventListener('change', () => {
+        const side = el.dataset.stStar;
+        const v = Math.max(0, Math.min(9, Math.round(Number(el.value) || 0)));
+        if (side === 'a') STATE.calc.statusA.star = v; else STATE.calc.statusB.star = v;
+        render();
+      });
+    }
+    // 状态面板：重置（清掉两侧选中的状态、攻击因子、血量、层数）
+    document.querySelector('[data-st-reset]')?.addEventListener('click', () => {
+      STATE.calc.statusA = { picks: [], star: 0 };
+      STATE.calc.statusB = { picks: [], star: 0 };
+      STATE.calc.modsA = { patkPct: 0, satkPct: 0, powerPct: 0, powerAdd: 0, finalPct: 100 };
+      STATE.calc.modsB = { patkPct: 0, satkPct: 0, powerPct: 0, powerAdd: 0, finalPct: 100 };
+      STATE.calc.hpPctA = 100; STATE.calc.hpPctB = 100;
+      STATE.calc.hpA = 0; STATE.calc.hpB = 0;
+      render();
+    });
+    // 状态面板：「？异常与印记」说明
+    document.querySelector('[data-st-help]')?.addEventListener('click', () => statusHelpDialog());
   }
 
   // 详情弹窗里的加点面板：改完只重画面板本身（不重画整个弹窗，避免滚动位置丢失）

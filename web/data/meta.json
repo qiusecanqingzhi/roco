@@ -9,7 +9,8 @@
   "types": 18,
   "matchups": 324,
   "teams": 12,
-  "glossary": 54
+  "glossary": 54,
+  "statuses": 54
  },
  "origin": "https://roco.world",
  "types": [
@@ -2548,6 +2549,43 @@
    "assets/f2bc7789ad9c_images_skills_118044.webp"
   ]
  ],
+ "statusKinds": {
+  "mark": {
+   "label": "印记",
+   "color": "#8a5fd0",
+   "desc": "下场不消失，新入场的精灵继承"
+  },
+  "weather": {
+   "label": "天气",
+   "color": "#3f8fbf",
+   "desc": "影响双方"
+  },
+  "status": {
+   "label": "状态",
+   "color": "#c05a4a",
+   "desc": "回合结算或限制行动"
+  },
+  "buff": {
+   "label": "增益 / 减益",
+   "color": "#4a9a5f",
+   "desc": "属性与效果的统称"
+  },
+  "counter": {
+   "label": "应对",
+   "color": "#c97917",
+   "desc": "条件触发，必定先手"
+  },
+  "leave": {
+   "label": "离场",
+   "color": "#6d7f95",
+   "desc": "更换入场精灵"
+  },
+  "mechanic": {
+   "label": "机制",
+   "color": "#7a7f8a",
+   "desc": "通用规则与术语"
+  }
+ },
  "bloodlines": {
   "1": {
    "name": "普通系血脉",
