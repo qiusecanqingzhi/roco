@@ -101,9 +101,10 @@ const STATE = {
     level: 60,
     // 与官方说明页算例同参数：(75 + 20) × (1 + 50%) = 142.5 -> 显示威力 356 -> 伤害 332
     flatAdd: 20, skillPct: 0.5, atkStage: 0, defStage: 0,
-    powerMul: 1, finalMul: 1, hpA: 0, hpB: 0, sortByDamage: true,
+    powerMul: 1, finalMul: 1, sortByDamage: true,
     // 两侧各自的加点配置：Map<"id:form", {stats:{k:{iv,nature}}}>，与详情页那份独立
-    cfgA: new Map(), cfgB: new Map(),  },
+    cfgA: new Map(), cfgB: new Map(),
+  },
   calcSide: null,       // null=详情弹窗 / 'a'|'b'=伤害计算左右两侧
   view: 'spirits',
   filters: {
@@ -1146,7 +1147,7 @@ function topSkillsOf(side, sp, otherSp, limit) {
   const c = STATE.calc;
   const cfg = withCalcSide(side, () => spiritCalcOf(sp));
   const otherSide = side === 'a' ? 'b' : 'a';
-  const targetHp = otherSide === 'a' ? (c.hpA || otherSp.stats.hp) : (c.hpB || otherSp.stats.hp);
+  const targetHp = targetHpOf(otherSide, otherSp);
   const list = usableSkillsOf(sp)
     .filter((s) => (s.dmgMax ?? 0) > 0 && s.cat !== '状态')
     .map((s) => {
@@ -1210,7 +1211,7 @@ function loadoutDamage(side, sp, otherSp) {
   const hits = side === 'a' ? c.hitA : c.hitB;
   const cfg = withCalcSide(side, () => spiritCalcOf(sp));
   const otherSide = side === 'a' ? 'b' : 'a';
-  const targetHp = otherSide === 'a' ? (c.hpA || otherSp.stats.hp) : (c.hpB || otherSp.stats.hp);
+  const targetHp = targetHpOf(otherSide, otherSp);
   const rows = [];
   let sum = 0;
   load.forEach((sid, i) => {
@@ -1296,9 +1297,9 @@ function sideStatusPanel(side, sp) {
   const st = isA ? c.statusA : c.statusB;
   const mods = isA ? c.modsA : c.modsB;
   const hpPct = isA ? c.hpPctA : c.hpPctB;
-  const hpNow = isA ? c.hpA : c.hpB;
-  const hpMax = sp.stats.hp ?? 0;
-  const cur = hpNow || Math.round((hpMax * hpPct) / 100);
+  // 总量用面板生命值（与卡片区同一个数），不是种族基础值
+  const hpMax = hpMaxOf(side, sp);
+  const cur = hpNowOf(side, sp);
   const kinds = STATE.data.meta.statusKinds ?? {};
   const picked = st.picks ?? [];
 
@@ -1473,6 +1474,32 @@ function skillLoadout(side, sp, otherSp) {
   </div>`;
 }
 
+/**
+ * 血量只有一个真值：百分比（hpPctA / hpPctB，0~100），
+ * 而"总量"就是**面板生命值**（卡片区显示的那个数，含种族/个体/性格）。
+ *
+ * 先前这里用 sp.stats.hp（种族基础值，比如 90）当总量，卡片却显示面板值 323，
+ * 于是出现"卡片 323 / 血量条 100/90"这种对不上的情况。
+ * 现在统一走 calcStatsOf：血量条、四技能槽的目标血量、卡片三者同一个数。
+ */
+function hpMaxOf(side, sp) {
+  if (!sp) return 0;
+  const cfg = withCalcSide(side, () => spiritCalcOf(sp));
+  return calcStatsOf(sp, cfg).hp ?? 0;
+}
+/** 当前血量 = round(面板生命 × 百分比)，夹在 [0, 面板生命] */
+function hpNowOf(side, sp) {
+  const pct = (side === 'a' ? STATE.calc.hpPctA : STATE.calc.hpPctB) ?? 100;
+  const max = hpMaxOf(side, sp);
+  return Math.max(0, Math.min(max, Math.round((max * pct) / 100)));
+}
+/** 目标血量（打这一侧时按当前血量算）：为 0 时退回满血，避免除零 */
+function targetHpOf(side, sp) {
+  const max = hpMaxOf(side, sp);
+  const now = hpNowOf(side, sp);
+  return now > 0 ? now : max;
+}
+
 /** 一侧的面板 + 技能选择。加点用与详情页同一套组件（个体按钮 + 性格逐项开关）
  *  opts.atkKey：这一侧出招用的攻击项（没选技能时传 null，就不画攻击高亮）
  *  opts.defKey：这一侧挨打看的防御项（对面没选技能时传 null） */
@@ -1509,7 +1536,7 @@ function calcSide(side, sp, otherSp, opts = {}) {
       flatAdd: c.flatAdd, skillPct: c.skillPct,
       atkStage: c.atkStage, defStage: c.defStage,
       powerMul: c.powerMul, finalMul: c.finalMul,
-      targetHp: isA ? (c.hpB || otherSp.stats.hp) : (c.hpA || otherSp.stats.hp),
+      targetHp: targetHpOf(isA ? 'b' : 'a', otherSp),
       // 状态面板里的攻击因子：出招这一侧的加成
       mods: isA ? c.modsA : c.modsB,
     });
@@ -2219,7 +2246,7 @@ function bindView() {
       el.addEventListener('input', () => {
         const side = el.dataset.stHp;
         const v = Math.max(0, Math.min(100, Number(el.value) || 0));
-        if (side === 'a') { STATE.calc.hpPctA = v; STATE.calc.hpA = v; } else { STATE.calc.hpPctB = v; STATE.calc.hpB = v; }
+        if (side === 'a') STATE.calc.hpPctA = v; else STATE.calc.hpPctB = v;
         softRerender('calc');
       });
     }
@@ -2239,7 +2266,6 @@ function bindView() {
       STATE.calc.modsA = { patkPct: 0, satkPct: 0, powerPct: 0, powerAdd: 0, finalPct: 100 };
       STATE.calc.modsB = { patkPct: 0, satkPct: 0, powerPct: 0, powerAdd: 0, finalPct: 100 };
       STATE.calc.hpPctA = 100; STATE.calc.hpPctB = 100;
-      STATE.calc.hpA = 0; STATE.calc.hpB = 0;
       render();
     });
     // 状态面板：「？异常与印记」说明

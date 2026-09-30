@@ -707,6 +707,57 @@ console.log('\n· 血量条 · 精灵选择 · 状态分类');
   const helpKinds = Object.keys(A2.data.meta.statusKinds);
   ok(helpKinds.includes('counter') && helpKinds.includes('mechanic'), '「？异常与印记」里仍有应对/机制（数据没删）');
 
+  // 血量必须与卡片区的生命面板值一致（先前这里用种族基础值当总量，
+  // 卡片显示面板值 323、血量条却显示 100/90，两个数对不上）
+  {
+    A2.calc.hpPctA = 100; A2.calc.hpPctB = 100;
+    ids.get('app').innerHTML = '';
+    api.render();
+    const appX = () => ids.get('app')._el;
+    const cardHp = (side) => {
+      const card = [...appX().querySelectorAll(`.stat-cards[data-calc-side="${side}"] .s-card`)]
+        .find((c) => c.dataset.stat === 'hp');
+      const m = /s-panel">(\d+)</.exec(card ? card.innerHTML : '');
+      return m ? Number(m[1]) : null;
+    };
+    const barHp = (side) => {
+      const box = [...appX().querySelectorAll('.st-hp')][side === 'a' ? 0 : 1];
+      const m = /(\d+)%\s*(\d+)\/(\d+)/.exec(box.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '));
+      return m ? { pct: Number(m[1]), cur: Number(m[2]), max: Number(m[3]) } : null;
+    };
+    for (const side of ['a', 'b']) {
+      const c = cardHp(side); const b = barHp(side);
+      ok(c !== null && b !== null, `${side} 侧能同时读到卡片生命值与血量条`);
+      ok(c === b.max, `${side} 侧血量条的「总量」= 卡片生命面板值（${b.max} vs ${c}）`);
+    }
+    // 拖到 60%：当前血量 = round(总量 × 60%)，且绝不超过总量
+    A2.calc.hpPctA = 60;
+    ids.get('app').innerHTML = '';
+    api.render();
+    {
+      const c = cardHp('a'); const b = barHp('a');
+      ok(b.pct === 60, `拖动后百分比是 60（实际 ${b.pct}）`);
+      ok(b.cur === Math.round(c * 0.6), `当前血量 = round(${c} × 60%) = ${b.cur}`);
+      ok(b.cur <= b.max, '当前血量不超过总量（不会再出现 100/90 这种）');
+    }
+    // 换精灵：总量跟着换成新精灵的面板生命值，且不残留上一只的数值
+    A2.calc.hpPctA = 50;
+    A2.calc.a = '152:1';
+    A2.calc.spOpen = null;
+    ids.get('app').innerHTML = '';
+    api.render();
+    {
+      const c = cardHp('a'); const b = barHp('a');
+      ok(c === b.max, `换精灵后总量换成新面板值（${b.max} vs ${c}）`);
+      ok(b.cur === Math.round(c * 0.5), `当前血量按新总量换算（${b.cur} = round(${c} × 50%)）`);
+      ok(b.cur <= b.max, '换精灵后也不出现"当前 > 总量"');
+    }
+    // 还原
+    A2.calc.a = '20:1'; A2.calc.hpPctA = 100; A2.calc.hpPctB = 100;
+    ids.get('app').innerHTML = '';
+    api.render();
+  }
+
   // ④ 精灵选择是可搜索的下拉
   ok(appH().querySelectorAll('select[data-calc="spirit"]').length === 0, '不再是原生 select');
   ok(appH().querySelectorAll('[data-calc-picker]').length === 2, '两侧各一个下拉按钮');
