@@ -625,9 +625,6 @@ table.lo-table .lo-pct { font-size: 11px; color: var(--text-dim); font-variant-n
 .st-hp-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--text-dim); }
 .st-hp-head b { font-size: 15px; color: var(--text); font-variant-numeric: tabular-nums; }
 .st-hp-head input[type="number"] { width: 56px; text-align: center; }
-.st-hp input[type="range"] { width: 100%; }
-.st-hp-bar { height: 9px; border-radius: 5px; background: var(--card-hi); overflow: hidden; }
-.st-hp-bar > i { display: block; height: 100%; background: color-mix(in srgb, var(--accent) 78%, #000); }
 .st-picker { display: grid; gap: 8px; }
 .st-group-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .st-chips { display: flex; flex-wrap: wrap; gap: 5px; }
@@ -637,6 +634,58 @@ table.lo-table .lo-pct { font-size: 11px; color: var(--text-dim); font-variant-n
 }
 .st-chip:hover { border-color: var(--accent); color: var(--accent); }
 .st-chip.on { background: color-mix(in srgb, var(--accent) 24%, var(--card)); color: var(--text); font-weight: 700; }
+
+/* 可搜索的精灵选择下拉 */
+.calc-picker { position: relative; }
+.calc-picker-btn {
+  width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 7px 10px; font-size: 13px; text-align: left; cursor: pointer;
+  background: var(--card); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px;
+}
+.calc-picker-btn:hover { border-color: var(--accent); }
+.calc-picker-cur { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.calc-picker-caret { color: var(--text-faint); flex: 0 0 auto; }
+.calc-picker-panel {
+  position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 4px);
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 12px 30px #0003; padding: 8px; display: grid; gap: 6px;
+}
+.calc-picker-q {
+  width: 100%; padding: 6px 9px; font-size: 13px;
+  border: 1px solid var(--line); border-radius: 7px; background: var(--bg-soft); color: var(--text);
+}
+.calc-picker-list { max-height: 260px; overflow-y: auto; display: grid; gap: 2px; }
+.calc-picker-item {
+  text-align: left; padding: 5px 8px; font-size: 12px; cursor: pointer;
+  background: transparent; border: none; border-radius: 6px; color: var(--text-dim);
+}
+.calc-picker-item:hover { background: var(--card-hi); color: var(--text); }
+.calc-picker-item.on { background: color-mix(in srgb, var(--accent) 22%, var(--card)); color: var(--text); font-weight: 700; }
+
+/* 血量条：进度条上叠一个可拖动的滑块 */
+.st-hp-track { position: relative; height: 18px; display: flex; align-items: center; }
+.st-hp-track .st-hp-bar {
+  position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%);
+  height: 9px; border-radius: 5px; background: var(--card-hi); overflow: hidden;
+}
+.st-hp-track .st-hp-bar > i { display: block; height: 100%; background: #2f5fa8; }
+.st-hp-track input[type="range"] {
+  position: relative; z-index: 1; width: 100%; margin: 0; background: transparent;
+  -webkit-appearance: none; appearance: none; height: 18px; cursor: grab;
+}
+.st-hp-track input[type="range"]:active { cursor: grabbing; }
+.st-hp-track input[type="range"]::-webkit-slider-runnable-track { height: 18px; background: transparent; }
+.st-hp-track input[type="range"]::-moz-range-track { height: 18px; background: transparent; }
+.st-hp-track input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #2f5fa8; border: 2px solid var(--card); box-shadow: 0 1px 4px #0005;
+}
+.st-hp-track input[type="range"]::-moz-range-thumb {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #2f5fa8; border: 2px solid var(--card);
+}
 
 /* ------------------------------------------------------ 术语 */
 .glossary { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }

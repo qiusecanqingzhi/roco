@@ -339,9 +339,16 @@ ok(/伤害计算/.test(calcHtml), '渲染出「伤害计算」页');
 ok(/岚鸟/.test(calcHtml) && /奇丽花/.test(calcHtml), '两侧分别显示岚鸟与奇丽花');
 // 这几条要在"当前 DOM"上查：后面的卡片用例会重渲染，早先抓的 calcHtml 会过期
 const calcLive = () => ids.get('app').innerHTML;
+const html4 = (h) => {
+  const m = /④预计伤害([\s\S]{0,160}?)<\/div>/.exec(h);
+  return m ? m[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : '(未找到)';
+};
 ok(/142\.5/.test(calcLive()), '页面摊开了①有效威力 142.5');
 ok(/356/.test(calcLive()), '页面摊开了②显示威力 356');
-ok(/332/.test(calcLive()), '页面摊开了④预计伤害 332');
+// 注意：这里是【个体全 0】的默认状态，所以是 334。
+// 官方说明页算例的 332 是"岚鸟物攻个体 60 / 奇丽花物防个体 60"那组参数，
+// 已经在上面「完整公式：复现参考页的 332」里单独断言过。
+ok(/334/.test(calcLive()), `页面摊开了④预计伤害 334（默认个体全 0；实际页面：${(html4(calcLive()))}）`);
 ok(/0\.9024/.test(calcLive()), '页面显示等级系数 0.9024');
 ok(/需要/.test(calcLive()) && /下/.test(calcLive()), '给出「需要几下」');
 ok(/data-calc="level"/.test(calcHtml), '等级可调');
@@ -605,7 +612,7 @@ console.log('\n· 状态面板');
   ok(appS().querySelectorAll('[data-st-mod]').length === 10, '两侧各 5 个攻击因子（共 10）');
   ok(appS().querySelectorAll('[data-st-hp]').length === 2, '两侧各一条血量滑块');
   ok(appS().querySelectorAll('[data-st-star]').length === 2, '两侧各一个星陨层数');
-  ok(appS().querySelectorAll('[data-st-pick]').length === 54 * 2, `两侧共 108 个状态可选按钮（实际 ${appS().querySelectorAll('[data-st-pick]').length}）`);
+  ok(appS().querySelectorAll('[data-st-pick]').length === 33 * 2, `两侧共 66 个状态可选按钮（前四类 33 条 ×2，实际 ${appS().querySelectorAll('[data-st-pick]').length}）`);
 
   // 点一个状态 -> 出现卡片
   appS().querySelector('[data-st-pick="a:starfall-mark"]').click();
@@ -661,6 +668,70 @@ console.log('\n· 状态面板');
   ok(A2.calc.statusA.picks.length === 0 && A2.calc.statusA.star === 0 && A2.calc.modsA.patkPct === 0,
     '「重置」清掉状态、层数与攻击因子');
   ok(A2.calc.hpPctA === 100, '「重置」把血量回到 100%');
+}
+
+/* ---------------------------------------------------------- 血量 / 精灵选择 / 分类 */
+console.log('\n· 血量条 · 精灵选择 · 状态分类');
+{
+  A2.calc.a = '20:1'; A2.calc.b = '43:1'; A2.calc.skillA = 7150060;
+  A2.calc.spOpen = null; A2.calc.spQuery = { a: '', b: '' };
+  A2.view = 'calc';
+  ids.get('app').innerHTML = '';
+  api.render();
+  const appH = () => ids.get('app')._el;
+
+  // ① 旧的「当前血量」输入框已摘掉，血量只在下方状态面板里调
+  ok(appH().querySelectorAll('[data-calc="hp"]').length === 0, '侧栏不再有「当前血量」输入框');
+  ok(!appH().querySelector('#chp-a') && !appH().querySelector('#chp-b'), '旧的 #chp- 输入框已移除');
+
+  // ② 血量条是可拖动的滑块，叠在进度条上
+  const tracks = appH().querySelectorAll('.st-hp-track input[type="range"][data-st-hp]');
+  ok(tracks.length === 2, `两侧各一个可拖动血量滑块（实际 ${tracks.length}）`);
+  ok(appH().querySelectorAll('.st-hp-track .st-hp-bar').length === 2, '滑块下面有进度条');
+  const hpEl = appH().querySelector('[data-st-hp="a"]');
+  hpEl.value = '30';
+  hpEl.dispatch('input');
+  ok(A2.calc.hpPctA === 30, `拖动血量条写进状态（实际 ${A2.calc.hpPctA}）`);
+  ok(/30%/.test(appH().querySelector('.st-hp').innerHTML), '血量数字跟着变（显示 30%）');
+
+  // ③ 状态选择只保留前四类
+  const groups = [...appH().querySelectorAll('.st-group-head')].map((g) => g.innerHTML.replace(/<[^>]+>/g, ' ').trim());
+  ok(appH().querySelectorAll('.st-group').length === 8, `两侧各 4 个分类分组（共 8，实际 ${appH().querySelectorAll('.st-group').length}）`);
+  for (const label of ['印记', '天气', '状态', '增益']) {
+    ok(groups.some((g) => g.includes(label)), `选择区保留了「${label}」分类`);
+  }
+  for (const label of ['应对', '离场', '机制']) {
+    ok(!groups.some((g) => g.startsWith(label)), `选择区不再显示「${label}」分类`);
+  }
+  // 但说明弹窗里仍然全都有
+  const helpKinds = Object.keys(A2.data.meta.statusKinds);
+  ok(helpKinds.includes('counter') && helpKinds.includes('mechanic'), '「？异常与印记」里仍有应对/机制（数据没删）');
+
+  // ④ 精灵选择是可搜索的下拉
+  ok(appH().querySelectorAll('select[data-calc="spirit"]').length === 0, '不再是原生 select');
+  ok(appH().querySelectorAll('[data-calc-picker]').length === 2, '两侧各一个下拉按钮');
+  ok(/岚鸟/.test(appH().querySelector('[data-calc-picker="a"]').innerHTML), '按钮显示当前精灵');
+  appH().querySelector('[data-calc-picker="a"]').click();
+  ok(A2.calc.spOpen === 'a', '点一下展开下拉');
+  const qEl = appH().querySelector('[data-calc-picker-q="a"]');
+  ok(!!qEl, '下拉里有搜索框');
+  ok(appH().querySelectorAll('.calc-picker-item').length > 10, '未过滤时列出候选');
+  // 输入过滤（debounce 之后生效）
+  qEl.value = '翼王';
+  qEl.dispatch('input');
+  await new Promise((r) => setTimeout(r, 240));
+  const hits = [...appH().querySelectorAll('.calc-picker-item')].map((x) => x.innerHTML.replace(/<[^>]+>/g, ''));
+  ok(hits.length >= 1 && hits.every((h) => h.includes('翼王')), `搜「翼王」只留下匹配项（${hits.join(' / ')}）`);
+  // 选中：注意精灵键本身含冒号（152:1），不能被 split(':') 截断
+  appH().querySelector('.calc-picker-item').click();
+  ok(A2.calc.a === '152:1', `选中后记下完整键（实际 ${A2.calc.a}）`);
+  ok(!!A2.bySpirit.get(A2.calc.a), '选中的键在精灵表里查得到');
+  ok(A2.calc.spOpen === null, '选完自动收起');
+  ok(/翼王/.test(appH().querySelector('[data-calc-picker="a"]').innerHTML), '按钮换成新精灵');
+  ok(appH().querySelectorAll('.stat-cards .s-card').length === 12, `换精灵后卡片区跟着重画（共 12 张，实际 ${appH().querySelectorAll('.stat-cards .s-card').length}）`);
+
+  // 还原，别影响后面的断言
+  A2.calc.a = '20:1'; A2.calc.hpPctA = 100;
 }
 
 // 性格表源自 BiliWiki：30 种，每种 +1 项 / -1 项，每项属性当"增""减"各 5 次。

@@ -96,6 +96,8 @@ const STATE = {
     modsA: { patkPct: 0, satkPct: 0, powerPct: 0, powerAdd: 0, finalPct: 100 },
     modsB: { patkPct: 0, satkPct: 0, powerPct: 0, powerAdd: 0, finalPct: 100 },
     hpPctA: 100, hpPctB: 100,
+    // 精灵选择下拉：哪一侧展开着、各自的搜索词
+    spOpen: null, spQuery: { a: '', b: '' },
     level: 60,
     // 与官方说明页算例同参数：(75 + 20) × (1 + 50%) = 142.5 -> 显示威力 356 -> 伤害 332
     flatAdd: 20, skillPct: 0.5, atkStage: 0, defStage: 0,
@@ -988,13 +990,42 @@ function usableSkillsOf(sp) {
   return out;
 }
 
-/** 下拉框：精灵选择 */
-function spiritOptions(selected) {
-  return STATE.data.spirits.map((s) => {
-    const key = `${s.id}:${s.formId}`;
-    const label = `#${s.id} ${s.name}${s.form ? '·' + s.form : ''}`;
-    return `<option value="${key}"${key === selected ? ' selected' : ''}>${esc(label)}</option>`;
-  }).join('');
+/**
+ * 精灵选择：可搜索的下拉。
+ * 原来是原生 <select>，几百只精灵只能靠输入首字跳转；这里做成
+ * 「按钮显示当前选择 + 点开是带搜索框的列表」，按名字或编号过滤。
+ */
+function spiritPicker(side, current) {
+  const sp = STATE.bySpirit.get(current);
+  const q = (STATE.calc.spQuery?.[side] ?? '').trim().toLowerCase();
+  const open = STATE.calc.spOpen === side;
+  const label = sp ? `#${sp.id} ${sp.name}${sp.form ? '·' + sp.form : ''}` : '(未选择)';
+  let list = '';
+  if (open) {
+    const all = STATE.data.spirits
+      .filter((s) => (!q ? true : `${s.id} ${s.name}${s.form ? '·' + s.form : ''}`.toLowerCase().includes(q)))
+      .slice(0, 60);
+    list = `<div class="calc-picker-panel">
+      <input type="search" class="calc-picker-q" data-calc-picker-q="${side}"
+        placeholder="搜精灵名或编号…" value="${esc(STATE.calc.spQuery?.[side] ?? '')}" autocomplete="off">
+      <div class="calc-picker-list">
+        ${all.length ? all.map((s) => {
+      const key = `${s.id}:${s.formId}`;
+      const nm = `#${s.id} ${s.name}${s.form ? '·' + s.form : ''}`;
+      return `<button type="button" class="calc-picker-item${key === current ? ' on' : ''}"
+            data-calc-pick-spirit="${side}:${key}">${esc(nm)}</button>`;
+    }).join('') : '<div class="desc" style="padding:6px">没有匹配的精灵</div>'}
+      </div>
+    </div>`;
+  }
+  return `<div class="calc-picker">
+    <button type="button" class="calc-picker-btn" data-calc-picker="${side}"
+      aria-expanded="${open ? 'true' : 'false'}">
+      <span class="calc-picker-cur">${esc(label)}</span>
+      <span class="calc-picker-caret" aria-hidden="true">▾</span>
+    </button>
+    ${list}
+  </div>`;
 }
 
 /**
@@ -1288,11 +1319,13 @@ function sideStatusPanel(side, sp) {
     }).join('')
     : '<div class="st-empty">还没有选状态 —— 从下面按分类挑</div>';
 
-  // 可选状态：按分类分组
+  // 可选状态：按分类分组，只保留前四类（印记 / 天气 / 状态 / 增益减益）——
+  // 应对、离场、机制属于"规则说明"，更适合放在「？异常与印记」里看
+  const PICKER_KINDS = ['mark', 'weather', 'status', 'buff'];
   const pickHtml = Object.keys(kinds).length
-    ? Object.entries(kinds).map(([kind, meta]) => {
+    ? PICKER_KINDS.filter((kind) => kinds[kind] && STATE.statuses.some((s) => s.kind === kind)).map((kind) => {
+      const meta = kinds[kind];
       const list = STATE.statuses.filter((s) => s.kind === kind);
-      if (!list.length) return '';
       return `<div class="st-group">
         <div class="st-group-head"><span class="st-tag" style="--c:${meta.color}">${esc(meta.label)}</span>
           <span class="desc">${esc(meta.desc)}</span></div>
@@ -1332,8 +1365,11 @@ function sideStatusPanel(side, sp) {
         <span>${isA ? '我方' : '对方'}当前血量</span>
         <b>${hpPct}% <span class="desc">${cur}/${hpMax}</span></b>
       </div>
-      <input type="range" min="0" max="100" value="${hpPct}" data-st-hp="${side}" aria-label="当前血量百分比">
-      <div class="st-hp-bar"><i style="width:${hpPct}%"></i></div>
+      <div class="st-hp-track">
+        <div class="st-hp-bar"><i style="width:${hpPct}%"></i></div>
+        <input type="range" min="0" max="100" value="${hpPct}" data-st-hp="${side}"
+               aria-label="${isA ? '我方' : '对方'}当前血量百分比" title="左右拖动调整血量">
+      </div>
     </div>
 
     <div class="st-star">
@@ -1348,9 +1384,29 @@ function sideStatusPanel(side, sp) {
   </div>`;
 }
 
+/** 给精灵选择下拉里的每一项绑事件（输入过滤后会重建列表，所以单独抽出来重绑） */
+function bindSpiritPickerItems() {
+  for (const item of document.querySelectorAll('[data-calc-pick-spirit]')) {
+    if (item.dataset.bound === '1') continue;
+    item.dataset.bound = '1';
+    item.addEventListener('click', () => {
+      // 属性值是 "side:formId:form"，精灵键本身含冒号，所以只切第一段
+      const raw = item.dataset.calcPickSpirit;
+      const sep = raw.indexOf(':');
+      const side = raw.slice(0, sep);
+      const key = raw.slice(sep + 1);
+      STATE.calc[side] = key;
+      STATE.calc.skillA = null; STATE.calc.skillB = null;
+      resetLoadoutInit(side);
+      STATE.calc.spOpen = null;
+      STATE.calc.spQuery[side] = '';
+      render();
+    });
+  }
+}
+
 /** 状态面板（伤害计算页） */
-function statusPanel(a, b) {
-  return `<section class="calc-status" aria-label="状态">
+function statusPanel(a, b) {  return `<section class="calc-status" aria-label="状态">
     <div class="calc-status-head">
       <h3>状态</h3>
       <div class="calc-status-actions">
@@ -1426,7 +1482,7 @@ function calcSide(side, sp, otherSp, opts = {}) {
   const skills = usableSkillsOf(sp);
   const curSkillId = isA ? c.skillA : c.skillB;
   const curSkill = curSkillId ? STATE.bySkill.get(curSkillId) : null;
-  const hp = isA ? c.hpA : c.hpB;
+  // 当前血量统一放在下方「状态」面板里调（百分比滑块），这里不再单独放输入框
   // 这一侧自己的加点配置（与详情页、与另一侧都独立）
   const cfg = withCalcSide(side, () => spiritCalcOf(sp));
   // 面板上画的攻/防项由外面算好（要看两侧的技能才知道）
@@ -1463,7 +1519,7 @@ function calcSide(side, sp, otherSp, opts = {}) {
   return `
   <div class="calc-side">
     <div class="calc-head">
-      <select class="calc-select" data-calc="spirit" data-side="${side}">${spiritOptions(isA ? c.a : c.b)}</select>
+      ${spiritPicker(side, isA ? c.a : c.b)}
       <div class="calc-spirit">
         ${imgTag(sp.head, sp.headOnline, sp.name, 'calc-head')}
         <div>
@@ -1478,10 +1534,6 @@ function calcSide(side, sp, otherSp, opts = {}) {
         <option value="">— 请选择技能 —</option>${skillOpts}
       </select>
     </label>
-
-    <div class="calc-row">
-      <label>当前血量 <input type="number" id="chp-${side}" min="0" value="${hp || ''}" placeholder="${sp.stats.hp}" data-calc="hp" data-side="${side}"></label>
-    </div>
 
     <div class="calc-toolbar">
       <span class="desc">个体上限 <b>${IV_MAX}</b>　最多投 <b>3 项</b></span>
@@ -2192,6 +2244,43 @@ function bindView() {
     });
     // 状态面板：「？异常与印记」说明
     document.querySelector('[data-st-help]')?.addEventListener('click', () => statusHelpDialog());
+
+    // 精灵选择：展开/收起
+    for (const btn of document.querySelectorAll('[data-calc-picker]')) {
+      btn.addEventListener('click', () => {
+        const side = btn.dataset.calcPicker;
+        STATE.calc.spOpen = STATE.calc.spOpen === side ? null : side;
+        render();
+      });
+    }
+    // 精灵选择：搜索框（输入后只重画下拉，避免整页刷新丢焦点）
+    for (const el of document.querySelectorAll('[data-calc-picker-q]')) {
+      el.addEventListener('input', debounce(() => {
+        const side = el.dataset.calcPickerQ;
+        STATE.calc.spQuery[side] = el.value;
+        const panel = el.parentNode;
+        // 只换列表部分，输入框保持焦点
+        const box = document.querySelector('.calc-picker-panel');
+        if (panel && box) {
+          const q = el.value.trim().toLowerCase();
+          const cur = STATE.calc[side];
+          const all = STATE.data.spirits
+            .filter((s) => (!q ? true : `${s.id} ${s.name}${s.form ? '·' + s.form : ''}`.toLowerCase().includes(q)))
+            .slice(0, 60);
+          const listEl = panel.querySelector('.calc-picker-list');
+          if (listEl) {
+            listEl.innerHTML = all.length ? all.map((s) => {
+              const key = `${s.id}:${s.formId}`;
+              const nm = `#${s.id} ${s.name}${s.form ? '·' + s.form : ''}`;
+              return `<button type="button" class="calc-picker-item${key === cur ? ' on' : ''}"
+                data-calc-pick-spirit="${side}:${key}">${esc(nm)}</button>`;
+            }).join('') : '<div class="desc" style="padding:6px">没有匹配的精灵</div>';
+            bindSpiritPickerItems();
+          }
+        }
+      }, 120));
+    }
+    bindSpiritPickerItems();
   }
 
   // 详情弹窗里的加点面板：改完只重画面板本身（不重画整个弹窗，避免滚动位置丢失）
