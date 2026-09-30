@@ -691,6 +691,117 @@ console.log('\n· 状态面板');
   ok(A2.calc.hpPctA === 100, '「重置」把血量回到 100%');
 }
 
+/* ---------------------------------------------------------- 状态造成的伤害 */
+console.log('\n· 状态造成的伤害（含元素克制）');
+{
+  ok(api.STATUS_EFFECTS && Object.keys(api.STATUS_EFFECTS).length >= 6,
+    `状态伤害表至少 6 项（实际 ${Object.keys(api.STATUS_EFFECTS ?? {}).length}）`);
+  for (const k of ['burn', 'poison', 'freeze', 'parasite', 'conductive-charge', 'poison-mark', 'thorn-mark', 'starfall-mark']) {
+    ok(!!api.STATUS_EFFECTS[k], `表里有「${k}」`);
+  }
+  ok(api.STATUS_EFFECTS.burn.pct === 2 && api.STATUS_EFFECTS.burn.element === '火系', '灼烧 = 火系 2%');
+  ok(api.STATUS_EFFECTS.poison.pct === 3 && api.STATUS_EFFECTS.poison.element === '毒系', '中毒 = 毒系 3%');
+  ok(api.STATUS_EFFECTS.freeze.pct === 5 && api.STATUS_EFFECTS.freeze.element === '冰系', '冻结 = 冰系 5%');
+
+  // 奇丽花是草系：火系打草系应触发克制
+  A2.calc.a = '20:1'; A2.calc.b = '43:1'; A2.calc.skillA = 7150060;
+  A2.calc.statusA = { picks: [], star: 0, layers: {} };
+  A2.calc.statusB = { picks: ['burn'], star: 0, layers: { burn: 3 } };
+  A2.calc.statusPctA = {}; A2.calc.statusPctB = {};
+  A2.calc.hpPctA = 100; A2.calc.hpPctB = 100;
+  A2.calc.modsA = { patkPct: 0, satkPct: 0, pdefPct: 0, sdefPct: 0, spdAdd: 0, powerPct: 0, powerAdd: 0, finalPct: 100 };
+  A2.calc.modsB = { ...A2.calc.modsA };
+  A2.view = 'calc';
+  ids.get('app').innerHTML = '';
+  api.render();
+  const appD = () => ids.get('app')._el;
+  const dmgBlock = (side) => [...appD().querySelectorAll('.st-dmg')][side === 'a' ? 0 : 1];
+  const txtD = (el) => el.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+  ok(appD().querySelectorAll('.st-dmg').length === 2, '两侧各有一块「状态造成的伤害」');
+  ok(/状态造成的伤害/.test(txtD(dmgBlock('b'))), '对方那侧有该区块');
+
+  // 草系被火系克制：3 层 × 2% × 2 倍
+  const spB = A2.bySpirit.get(A2.calc.b);
+  const maxB = api.hpMaxOf('b', spB);
+  const expect = Math.floor((maxB * 6) / 100 * 2);
+  const d = api.statusDamageOf('b', spB);
+  ok(d.rows.length === 1 && d.rows[0].name === '灼烧', '算出的是灼烧这一条');
+  ok(d.rows[0].eff === 2, `火系打草系拿到 ×2 克制（实际 ×${d.rows[0].eff}）`);
+  ok(d.rows[0].raw === expect, `掉血 = floor(${maxB} × 6% × 2) = ${expect}（实际 ${d.rows[0].raw}）`);
+  ok(d.total === expect, `合计 = ${expect}（实际 ${d.total}）`);
+  ok(new RegExp(`合计\\s*${expect}`).test(txtD(dmgBlock('b'))), `页面显示合计 ${expect}`);
+  ok(/2% × 3 层/.test(txtD(dmgBlock('b'))), '页面写清了「每层% × 层数」');
+  ok(/克制/.test(txtD(dmgBlock('b'))), '页面标了克制');
+
+  // 换个不被火克制的目标：倍数应为 ×1
+  A2.calc.b = '152:1';
+  ids.get('app').innerHTML = '';
+  api.render();
+  {
+    const sp2 = A2.bySpirit.get(A2.calc.b);
+    const d2 = api.statusDamageOf('b', sp2);
+    ok(d2.rows[0].eff === 1, `翼系不克制也不抵抗 -> ×1（实际 ×${d2.rows[0].eff}）`);
+    ok(d2.rows[0].raw === Math.floor((api.hpMaxOf('b', sp2) * 6) / 100), '掉血按 ×1 算');
+  }
+
+  // 层数：3 -> 5，掉血按比例涨
+  A2.calc.b = '43:1';
+  ids.get('app').innerHTML = '';
+  api.render();
+  const before5 = api.statusDamageOf('b', A2.bySpirit.get('43:1')).total;
+  const layEl = appD().querySelector('[data-st-layers="b:burn"]');
+  layEl.value = '5';
+  layEl.dispatch('change');
+  const after5 = api.statusDamageOf('b', A2.bySpirit.get('43:1')).total;
+  ok(A2.calc.statusB.layers.burn === 5, `层数改成 5（实际 ${A2.calc.statusB.layers.burn}）`);
+  ok(after5 > before5, `层数变多 -> 掉血变多（${before5} -> ${after5}）`);
+
+  // 每层百分比可改（默认取词条描述）
+  const pctEl = appD().querySelector('[data-st-pct="b:burn"]');
+  ok(Number(pctEl.value) === 2, `每层百分比默认 2（实际 ${pctEl.value}）`);
+  pctEl.value = '10';
+  pctEl.dispatch('change');
+  ok(A2.calc.statusPctB.burn === 10, '改百分比写进状态');
+  ok(api.statusDamageOf('b', A2.bySpirit.get('43:1')).total > after5, '百分比变大 -> 掉血变多');
+
+  // 掉血不会超过当前生命（最多力竭）
+  A2.calc.hpPctB = 10;
+  ids.get('app').innerHTML = '';
+  api.render();
+  {
+    const dd = api.statusDamageOf('b', A2.bySpirit.get('43:1'));
+    ok(dd.total > dd.curHp, '这个例子里理论掉血已经超过当前生命');
+    ok(dd.capped === dd.curHp, `实际扣除夹到当前生命（${dd.capped} = ${dd.curHp}）`);
+    ok(dd.lethal === true, '标记为会力竭');
+    ok(/会力竭/.test(txtD(dmgBlock('b'))), '页面上标出「会力竭」');
+  }
+
+  // 不带元素的状态（棘刺印记）不进这一块（它没有元素，没法算克制）
+  A2.calc.statusB = { picks: ['thorn-mark'], star: 0, layers: {} };
+  A2.calc.statusPctB = {};
+  A2.calc.hpPctB = 100;
+  ids.get('app').innerHTML = '';
+  api.render();
+  ok(api.statusDamageOf('b', A2.bySpirit.get('43:1')).rows.length === 0,
+    '无元素的状态（棘刺印记）不进"状态造成的伤害"');
+
+  // 没选任何状态时给出提示
+  A2.calc.statusB = { picks: [], star: 0, layers: {} };
+  ids.get('app').innerHTML = '';
+  api.render();
+  ok(appD().querySelectorAll('.st-dmg-empty').length === 2, '没选状态时两侧都显示提示文案');
+
+  // 还原
+  A2.calc.statusA = { picks: [], star: 0, layers: {} };
+  A2.calc.statusB = { picks: [], star: 0, layers: {} };
+  A2.calc.statusPctA = {}; A2.calc.statusPctB = {};
+  A2.calc.hpPctA = 100; A2.calc.hpPctB = 100;
+  A2.calc.b = '43:1';
+  ids.get('app').innerHTML = '';
+  api.render();
+}
+
 /* ---------------------------------------------------------- 血量 / 精灵选择 / 分类 */
 console.log('\n· 血量条 · 精灵选择 · 状态分类');
 {

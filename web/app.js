@@ -92,7 +92,9 @@ const STATE = {
     loInitA: false, loInitB: false,
     // 状态面板：每侧选中的状态 key、可调攻击因子、血量百分比、星陨层数。
     // 攻击因子会真正进入伤害计算（见 calcDamage 的 mods 参数）。
-    statusA: { picks: [], star: 0 }, statusB: { picks: [], star: 0 },
+    statusA: { picks: [], star: 0, layers: {} }, statusB: { picks: [], star: 0, layers: {} },
+    // 每种状态的伤害百分比（可改）；不填就用 STATUS_EFFECTS 里的默认值
+    statusPctA: {}, statusPctB: {},
     // 攻击因子：攻方四项（物攻/魔攻/速度/技能威力）与守方两项（物防/魔防）
     // 会真正进入伤害计算，见 calcDamage 的 mods 与 defMods
     modsA: { patkPct: 0, satkPct: 0, pdefPct: 0, sdefPct: 0, spdAdd: 0, powerPct: 0, powerAdd: 0, finalPct: 100 },
@@ -1393,7 +1395,68 @@ function sideStatusPanel(side, sp) {
       <div class="desc">使用非幻系技能攻击持有该印记的精灵时，消耗全部层数造成额外幻系伤害（幻系精灵不会获得）</div>
     </div>
 
+    ${statusDamageBlock(side, sp)}
+
     <div class="st-picker">${pickHtml}</div>
+  </div>`;
+}
+
+/**
+ * 「状态造成的伤害」区块：把该侧已选状态里**会造成伤害**的那些列出来，
+ * 每行可填层数与百分比，并按元素克制算出实际掉血。
+ * 灼烧/中毒这类描述里写的是"2%/3% 生命的某系伤害"，
+ * 既然是某系伤害，就要吃克制与抵抗 —— 这里把它算出来。
+ */
+function statusDamageBlock(side, sp) {
+  const d = statusDamageOf(side, sp);
+  if (!d.rows.length) {
+    return `<div class="st-dmg st-dmg-empty">
+      <div class="st-dmg-head"><span>状态造成的伤害</span></div>
+      <div class="desc">选中「中毒 / 灼烧 / 冻结 / 寄生 / 引电 / 中毒印记 / 棘刺印记」这类会造成伤害的状态后，
+        这里会按元素克制算出实际掉血。</div>
+    </div>`;
+  }
+  const pcts = side === 'a' ? STATE.calc.statusPctA : STATE.calc.statusPctB;
+  const rows = d.rows.map((r) => {
+    const layers = side === 'a' ? STATE.calc.statusA.layers : STATE.calc.statusB.layers;
+    const curLayers = layers?.[r.key] ?? r.layers;
+    const pctVal = pcts?.[r.key] ?? r.pct;
+    const effTxt = !r.effective ? ''
+      : r.eff === 2 ? '<span class="mx2">×2 克制</span>'
+        : r.eff === 0.5 ? '<span class="mxh">×½ 抵抗</span>'
+          : r.eff === 4 ? '<span class="mx2">×4 双克制</span>'
+            : r.eff === 0.25 ? '<span class="mxh">×¼ 双抵抗</span>' : '<span class="desc">×1</span>';
+    return `<div class="st-dmg-row">
+      <div class="st-dmg-name">
+        <b>${esc(r.name)}</b>
+        <span class="desc">${esc(r.element)} · ${esc(r.when)}${r.immune && r.immune !== '—' ? ` · ${esc(r.immune)}免疫` : ''}</span>
+      </div>
+      <label class="st-dmg-in">层
+        <input type="number" min="0" max="99" value="${curLayers}" data-st-layers="${side}:${r.key}" aria-label="${esc(r.name)}层数">
+      </label>
+      <label class="st-dmg-in">每层
+        <input type="number" min="0" max="100" step="0.5" value="${pctVal}" data-st-pct="${side}:${r.key}" aria-label="${esc(r.name)}每层百分比">
+        <span class="st-mod-u">%</span>
+      </label>
+      <div class="st-dmg-out">
+        ${effTxt}
+        <b>${r.raw}</b>
+        <span class="desc">${r.per === 'stack'
+          ? `${r.pct}% × ${r.layers} 层 = ${r.pctSum}% 生命`
+          : `${r.pct}% 生命`}</span>
+      </div>
+      ${r.note ? `<div class="desc st-dmg-note">${esc(r.note)}</div>` : ''}
+    </div>`;
+  }).join('');
+  return `<div class="st-dmg">
+    <div class="st-dmg-head">
+      <span>状态造成的伤害</span>
+      <b class="st-dmg-total">合计 ${d.total}
+        <span class="desc">/ 当前生命 ${d.curHp}${d.lethal ? ' · 会力竭' : ''}</span>
+      </b>
+    </div>
+    ${rows}
+    <div class="desc">按面板生命 × 百分比 × 元素克制计算；掉血不会超过当前生命。</div>
   </div>`;
 }
 
@@ -1510,6 +1573,56 @@ function targetHpOf(side, sp) {
   const max = hpMaxOf(side, sp);
   const now = hpNowOf(side, sp);
   return now > 0 ? now : max;
+}
+
+/**
+ * 状态伤害表：给「会造成伤害的状态」配上元素、每层百分比、结算方式。
+ * 挂在既有的状态集（STATE.statuses，来自本项目的术语库）上，不另造一份数据 ——
+ * 只补上"程序要用、词条描述里是自然语言"的那几个字段。
+ *
+ *   element   用于克制计算（与本项目 types 匹配）
+ *   pct       伤害百分比（默认值取自词条描述，用户可改）
+ *   per       按什么算：'stack' 百分比 × 层数；'once' 只看是否生效
+ *   when      结算时机（只作展示）
+ *   immune    谁免疫（照描述）
+ */
+const STATUS_EFFECTS = {
+  burn: { element: '火系', pct: 2, per: 'stack', when: '回合结束', immune: '火系精灵' },
+  poison: { element: '毒系', pct: 3, per: 'stack', when: '回合结束', immune: '毒系精灵' },
+  'poison-mark': { element: '毒系', pct: 3, per: 'once', when: '回合结束', immune: '—' },
+  freeze: { element: '冰系', pct: 5, per: 'stack', when: '立即/回合结束', immune: '冰系精灵', note: '当前生命低于该比例时力竭' },
+  parasite: { element: '草系', pct: 2, per: 'stack', when: '回合结束', immune: '草系精灵', note: '这部分生命由寄生来源回复' },
+  'conductive-charge': { element: '电系', pct: 25, per: 'once', when: '每攒满 2 层立即', immune: '电系精灵' },
+  'thorn-mark': { element: '—', pct: 6, per: 'once', when: '离场换人时', immune: '—' },
+  'starfall-mark': { element: '幻系', pct: 0, per: 'stack', when: '被非幻系技能攻击时', immune: '幻系精灵', note: '每层系数官方未给，pct 留 0 可自行填' },
+};
+
+/** 「会造成伤害的状态」在某个精灵身上能打出多少（含元素克制） */
+function statusDamageOf(side, sp) {
+  const st = side === 'a' ? STATE.calc.statusA : STATE.calc.statusB;
+  const pcts = side === 'a' ? STATE.calc.statusPctA : STATE.calc.statusPctB;
+  const maxHp = hpMaxOf(side, sp);
+  const curHp = hpNowOf(side, sp);
+  const rows = [];
+  for (const key of st.picks ?? []) {
+    const meta = STATUS_EFFECTS[key];
+    if (!meta || !meta.element || meta.element === '—') continue;
+    const def = STATE.statusByKey.get(key);
+    const layers = st.layers?.[key] ?? 1;
+    const pct = Number(pcts?.[key] ?? meta.pct) || 0;
+    const typeId = STATE.typeByName.get(meta.element)?.id;
+    const eff = typeId != null ? typeEffect(typeId, sp.types ?? []) : 1;
+    const perTurnPct = meta.per === 'stack' ? pct * layers : pct;
+    const raw = Math.floor((maxHp * perTurnPct) / 100 * eff);
+    rows.push({
+      key, name: def?.name ?? key, element: meta.element, layers,
+      pct, per: meta.per, when: meta.when, immune: meta.immune, note: meta.note,
+      eff, effective: typeId != null, pctSum: perTurnPct, raw,
+    });
+  }
+  const total = rows.reduce((a, r) => a + r.raw, 0);
+  return { rows, total, maxHp, curHp, // 掉血不会超过当前生命（最多力竭）
+    capped: Math.min(total, curHp), lethal: total >= curHp && curHp > 0 };
 }
 
 /** 一侧的面板 + 技能选择。加点用与详情页同一套组件（个体按钮 + 性格逐项开关）
@@ -2289,12 +2402,34 @@ function bindView() {
         render();
       });
     }
-    // 状态面板：重置（清掉两侧选中的状态、攻击因子、血量、层数）
+    // 状态伤害：层数
+    for (const el of document.querySelectorAll('[data-st-layers]')) {
+      el.addEventListener('change', () => {
+        const [side, key] = el.dataset.stLayers.split(':');
+        const st = side === 'a' ? STATE.calc.statusA : STATE.calc.statusB;
+        st.layers ??= {};
+        st.layers[key] = Math.max(0, Math.min(99, Math.round(Number(el.value) || 0)));
+        render();
+      });
+    }
+    // 状态伤害：每层百分比（可改，默认取词条描述里的数）
+    for (const el of document.querySelectorAll('[data-st-pct]')) {
+      el.addEventListener('change', () => {
+        const [side, key] = el.dataset.stPct.split(':');
+        const pcts = side === 'a' ? STATE.calc.statusPctA : STATE.calc.statusPctB;
+        let v = Number(el.value);
+        if (!Number.isFinite(v)) v = STATUS_EFFECTS[key]?.pct ?? 0;
+        pcts[key] = Math.max(0, v);
+        render();
+      });
+    }
+    // 状态面板：重置（清掉两侧选中的状态、层数、攻击因子、血量、百分比覆盖）
     document.querySelector('[data-st-reset]')?.addEventListener('click', () => {
-      STATE.calc.statusA = { picks: [], star: 0 };
-      STATE.calc.statusB = { picks: [], star: 0 };
-      STATE.calc.modsA = { patkPct: 0, satkPct: 0, powerPct: 0, powerAdd: 0, finalPct: 100 };
-      STATE.calc.modsB = { patkPct: 0, satkPct: 0, powerPct: 0, powerAdd: 0, finalPct: 100 };
+      STATE.calc.statusA = { picks: [], star: 0, layers: {} };
+      STATE.calc.statusB = { picks: [], star: 0, layers: {} };
+      STATE.calc.statusPctA = {}; STATE.calc.statusPctB = {};
+      STATE.calc.modsA = { patkPct: 0, satkPct: 0, pdefPct: 0, sdefPct: 0, spdAdd: 0, powerPct: 0, powerAdd: 0, finalPct: 100 };
+      STATE.calc.modsB = { patkPct: 0, satkPct: 0, pdefPct: 0, sdefPct: 0, spdAdd: 0, powerPct: 0, powerAdd: 0, finalPct: 100 };
       STATE.calc.hpPctA = 100; STATE.calc.hpPctB = 100;
       render();
     });
@@ -2606,6 +2741,7 @@ $('#themeBtn').addEventListener('click', () => {
       glossaryDetail, render, index, calcDamage, panelStat, levelCoef, typeEffect, usableSkillsOf,
       NATURES, natureByName, panelValue, panelInt, ivOf, defaultNat, stateIcon, withCalcSide, bindNatalBlock,
       loadoutDamage, skillLoadout, pushLoadout, statCards, topSkillsOf, fillLoadoutWithTop,
+      STATUS_EFFECTS, statusDamageOf, hpMaxOf, hpNowOf, targetHpOf, typeEffect,
       spiritCalcOf, calcStatsOf, natalBlock, bindNatalBlock, redrawNatalBlock, statBreakdown, natalBoxEl, defaultInvestSet,
     };
   } catch (err) {

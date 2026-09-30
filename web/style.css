@@ -691,6 +691,26 @@ table.lo-table .lo-pct { font-size: 11px; color: var(--text-dim); font-variant-n
   background: #2f5fa8; border: 2px solid var(--card);
 }
 
+/* 状态造成的伤害 */
+.st-dmg { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; display: grid; gap: 7px; }
+.st-dmg-empty { opacity: .9; }
+.st-dmg-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--text-dim); }
+.st-dmg-head .st-dmg-total { font-size: 14px; color: var(--text); font-variant-numeric: tabular-nums; }
+.st-dmg-head .st-dmg-total .desc { font-weight: 400; }
+.st-dmg-row {
+  display: grid; grid-template-columns: 1fr auto auto auto; gap: 6px 10px; align-items: center;
+  padding: 6px 0; border-top: 1px dashed var(--line);
+}
+.st-dmg-name { display: flex; flex-direction: column; min-width: 0; }
+.st-dmg-name b { font-size: 13px; }
+.st-dmg-name .desc { font-size: 11px; }
+.st-dmg-in { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--text-faint); }
+.st-dmg-in input { width: 52px; text-align: right; font-variant-numeric: tabular-nums; }
+.st-dmg-out { display: flex; align-items: baseline; gap: 5px; justify-self: end; }
+.st-dmg-out b { font-size: 15px; font-variant-numeric: tabular-nums; }
+.st-dmg-out .desc { font-size: 10px; }
+.st-dmg-note { grid-column: 1 / -1; font-size: 11px; }
+
 /* ------------------------------------------------------ 术语 */
 .glossary { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
 .gitem { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
