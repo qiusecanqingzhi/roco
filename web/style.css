@@ -663,27 +663,31 @@ table.lo-table .lo-pct { font-size: 11px; color: var(--text-dim); font-variant-n
 .calc-picker-item:hover { background: var(--card-hi); color: var(--text); }
 .calc-picker-item.on { background: color-mix(in srgb, var(--accent) 22%, var(--card)); color: var(--text); font-weight: 700; }
 
-/* 血量条：进度条上叠一个可拖动的滑块 */
-.st-hp-track { position: relative; height: 18px; display: flex; align-items: center; }
+/* 血量条：进度条上叠一个可拖动的滑块（拖动不重渲染，见 bindView） */
+.st-hp-track { position: relative; height: 22px; display: flex; align-items: center; }
 .st-hp-track .st-hp-bar {
   position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%);
-  height: 9px; border-radius: 5px; background: var(--card-hi); overflow: hidden;
+  height: 10px; border-radius: 5px; background: var(--card-hi); overflow: hidden;
+  pointer-events: none;   /* 让点击穿透到滑块，点条子任意位置都能跳过去 */
 }
-.st-hp-track .st-hp-bar > i { display: block; height: 100%; background: #2f5fa8; }
+.st-hp-track .st-hp-bar > i { display: block; height: 100%; background: #2f5fa8; transition: width .04s linear; }
 .st-hp-track input[type="range"] {
   position: relative; z-index: 1; width: 100%; margin: 0; background: transparent;
-  -webkit-appearance: none; appearance: none; height: 18px; cursor: grab;
+  -webkit-appearance: none; appearance: none; height: 22px;
+  cursor: grab; touch-action: none;
 }
 .st-hp-track input[type="range"]:active { cursor: grabbing; }
-.st-hp-track input[type="range"]::-webkit-slider-runnable-track { height: 18px; background: transparent; }
-.st-hp-track input[type="range"]::-moz-range-track { height: 18px; background: transparent; }
+.st-hp-track input[type="range"]::-webkit-slider-runnable-track { height: 22px; background: transparent; }
+.st-hp-track input[type="range"]::-moz-range-track { height: 22px; background: transparent; }
 .st-hp-track input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none;
-  width: 14px; height: 14px; border-radius: 50%;
+  width: 16px; height: 16px; border-radius: 50%;
   background: #2f5fa8; border: 2px solid var(--card); box-shadow: 0 1px 4px #0005;
+  transition: transform .08s ease;
 }
+.st-hp-track input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.18); }
 .st-hp-track input[type="range"]::-moz-range-thumb {
-  width: 14px; height: 14px; border-radius: 50%;
+  width: 16px; height: 16px; border-radius: 50%;
   background: #2f5fa8; border: 2px solid var(--card);
 }
 

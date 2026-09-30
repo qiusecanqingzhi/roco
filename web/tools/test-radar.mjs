@@ -609,7 +609,16 @@ console.log('\n· 状态面板');
   const appS = () => ids.get('app')._el;
   ok(!!appS().querySelector('.calc-status'), '伤害计算页有「状态」区块');
   ok(appS().querySelectorAll('.st-side').length === 2, '状态区块分两侧');
-  ok(appS().querySelectorAll('[data-st-mod]').length === 10, '两侧各 5 个攻击因子（共 10）');
+  ok(appS().querySelectorAll('[data-st-mod]').length === 16, `两侧各 8 个攻击因子（共 16，实际 ${appS().querySelectorAll('[data-st-mod]').length}）`);
+  // 因子的类别与顺序要跟参考图一致
+  {
+    const labels = [...appS().querySelectorAll('.st-side[data-st-side="a"] .st-mod')]
+      .map((m) => m.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
+    for (const want of ['物攻', '魔攻', '物防', '魔防', '速度', '技能威力']) {
+      ok(labels.some((l) => l.includes(want)), `攻击因子里有「${want}」`);
+    }
+    ok(labels.length === 8, `我方恰好 8 个因子（实际 ${labels.length}）`);
+  }
   ok(appS().querySelectorAll('[data-st-hp]').length === 2, '两侧各一条血量滑块');
   ok(appS().querySelectorAll('[data-st-star]').length === 2, '两侧各一个星陨层数');
   ok(appS().querySelectorAll('[data-st-pick]').length === 33 * 2, `两侧共 66 个状态可选按钮（前四类 33 条 ×2，实际 ${appS().querySelectorAll('[data-st-pick]').length}）`);
@@ -652,6 +661,18 @@ console.log('\n· 状态面板');
   });
   ok(withFinal.dmg > base.dmg, `独立乘区 150% 让伤害变高（${base.dmg} -> ${withFinal.dmg}）`);
   ok(!api.calcDamage(spS, defS, skS, { mods: null }).dmg !== base.dmg, '不传 mods 时行为不变（基准一致）');
+  // 物防/魔防走 defMods：物防只影响物理技能，魔防只影响魔法技能
+  const defUp = api.calcDamage(spS, defS, skS, {
+    level: 60, flatAdd: 20, skillPct: 0.5,
+    defMods: { pdefPct: 100, sdefPct: 0 },
+  });
+  const defCross = api.calcDamage(spS, defS, skS, {
+    level: 60, flatAdd: 20, skillPct: 0.5,
+    defMods: { pdefPct: 0, sdefPct: 100 },
+  });
+  ok(defUp.dmg < base.dmg, `物防+100% 让物理技能伤害减半（${base.dmg} -> ${defUp.dmg}）`);
+  ok(defCross.dmg === base.dmg, '魔防+100% 不影响物理技能（物防/魔防各走各的）');
+  ok(defUp.defStat === base.defStat * 2, `物防+100% 后防御值翻倍（${base.defStat} -> ${defUp.defStat}）`);
 
   // 血量滑块
   const hp = appS().querySelector('[data-st-hp="a"]');
@@ -684,15 +705,26 @@ console.log('\n· 血量条 · 精灵选择 · 状态分类');
   ok(appH().querySelectorAll('[data-calc="hp"]').length === 0, '侧栏不再有「当前血量」输入框');
   ok(!appH().querySelector('#chp-a') && !appH().querySelector('#chp-b'), '旧的 #chp- 输入框已移除');
 
-  // ② 血量条是可拖动的滑块，叠在进度条上
+  // ② 血量条是可拖动的滑块，叠在进度条上；拖动时只就地更新、不重渲染
   const tracks = appH().querySelectorAll('.st-hp-track input[type="range"][data-st-hp]');
   ok(tracks.length === 2, `两侧各一个可拖动血量滑块（实际 ${tracks.length}）`);
   ok(appH().querySelectorAll('.st-hp-track .st-hp-bar').length === 2, '滑块下面有进度条');
-  const hpEl = appH().querySelector('[data-st-hp="a"]');
-  hpEl.value = '30';
-  hpEl.dispatch('input');
-  ok(A2.calc.hpPctA === 30, `拖动血量条写进状态（实际 ${A2.calc.hpPctA}）`);
-  ok(/30%/.test(appH().querySelector('.st-hp').innerHTML), '血量数字跟着变（显示 30%）');
+  {
+    // 打个标记：若拖动中发生重渲染，这个标记会随节点一起消失
+    const box = appH().querySelector('[data-st-hp="a"]').closest('.st-hp');
+    box.dataset.dragProbe = 'keep';
+    const hpEl = appH().querySelector('[data-st-hp="a"]');
+    hpEl.value = '42';
+    hpEl.dispatch('input');
+    ok(A2.calc.hpPctA === 42, `拖动写进状态（实际 ${A2.calc.hpPctA}）`);
+    const box2 = appH().querySelector('[data-st-hp="a"]').closest('.st-hp');
+    ok(box2.querySelector('.st-hp-pct').textContent === '42%', `拖动中百分比文字就地更新（实际 ${box2.querySelector('.st-hp-pct').textContent}）`);
+    ok(/^\d+\/\d+$/.test(box2.querySelector('.st-hp-max').textContent), `拖动中当前/总量就地更新（实际 ${box2.querySelector('.st-hp-max').textContent}）`);
+    ok(box2.querySelector('.st-hp-bar i').style.width === '42%', `拖动中进度条宽度就地更新（实际 ${box2.querySelector('.st-hp-bar i').style.width}）`);
+    ok(appH().querySelector('[data-drag-probe="keep"]') !== null, '拖动过程中没有重渲染（否则正在拖的滑块会被换掉 → 卡手）');
+    // 松手（change）后才整体重算
+    delete box2.dataset.dragProbe;
+  }
 
   // ③ 状态选择只保留前四类
   const groups = [...appH().querySelectorAll('.st-group-head')].map((g) => g.innerHTML.replace(/<[^>]+>/g, ' ').trim());

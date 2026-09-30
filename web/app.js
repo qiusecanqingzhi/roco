@@ -93,8 +93,10 @@ const STATE = {
     // 状态面板：每侧选中的状态 key、可调攻击因子、血量百分比、星陨层数。
     // 攻击因子会真正进入伤害计算（见 calcDamage 的 mods 参数）。
     statusA: { picks: [], star: 0 }, statusB: { picks: [], star: 0 },
-    modsA: { patkPct: 0, satkPct: 0, powerPct: 0, powerAdd: 0, finalPct: 100 },
-    modsB: { patkPct: 0, satkPct: 0, powerPct: 0, powerAdd: 0, finalPct: 100 },
+    // 攻击因子：攻方四项（物攻/魔攻/速度/技能威力）与守方两项（物防/魔防）
+    // 会真正进入伤害计算，见 calcDamage 的 mods 与 defMods
+    modsA: { patkPct: 0, satkPct: 0, pdefPct: 0, sdefPct: 0, spdAdd: 0, powerPct: 0, powerAdd: 0, finalPct: 100 },
+    modsB: { patkPct: 0, satkPct: 0, pdefPct: 0, sdefPct: 0, spdAdd: 0, powerPct: 0, powerAdd: 0, finalPct: 100 },
     hpPctA: 100, hpPctB: 100,
     // 精灵选择下拉：哪一侧展开着、各自的搜索词
     spOpen: null, spQuery: { a: '', b: '' },
@@ -928,8 +930,11 @@ function calcDamage(atkSp, defSp, sk, opts = {}) {
   const powerMul = opts.powerMul ?? 1;
   const finalMul = opts.finalMul ?? 1;
   const random = opts.random ?? 1;
-  // 状态面板的攻击因子（可选）：本侧加成与对面削减都在这里汇合
+  // 状态面板的攻击因子（可选）：
+  //   mods     = 出招那一侧的加成（物攻/魔攻/技能威力/独立乘区）
+  //   defMods  = 挨打那一侧的加成（物防/魔防）
   const mods = opts.mods ?? null;
+  const defMods = opts.defMods ?? null;
 
   const isPhysical = (sk?.cat ?? '') === '物理';
   const isStatus = (sk?.cat ?? '') === '状态';
@@ -943,7 +948,10 @@ function calcDamage(atkSp, defSp, sk, opts = {}) {
   const rawAtkStat = panelOf(atkSp, atkKey, atkIV, atkNature);
   const modAtkPct = mods ? (atkKey === 'patk' ? (mods.patkPct ?? 0) : (mods.satkPct ?? 0)) : 0;
   const atkStat = Math.round(rawAtkStat * (1 + modAtkPct / 100));
-  const defStat = panelOf(defSp, defKey, defIV, defNature);
+  // 防御侧：物防/魔防的百分比加成（只影响参与计算的那一项）
+  const rawDefStat = panelOf(defSp, defKey, defIV, defNature);
+  const modDefPct = defMods ? (defKey === 'pdef' ? (defMods.pdefPct ?? 0) : (defMods.sdefPct ?? 0)) : 0;
+  const defStat = Math.max(1, Math.round(rawDefStat * (1 + modDefPct / 100)));
 
   // 攻防等级：攻击提升和防御下降都在分子，攻击下降和防御提升都在分母
   const atkZone = ((1 + atkStage) / (1 + defStage)) || 1;
@@ -970,7 +978,7 @@ function calcDamage(atkSp, defSp, sk, opts = {}) {
     basePower, flatAdd, skillPct, effective, atkStat, defStat, atkKey, defKey, isPhysical, isStatus,
     stab, typeEff, atkZone, powerMul, shown, lvCoef, level, inner, finalMul, random, dmg,
     targetHp, hits, pct: targetHp > 0 ? dmg / targetHp : 0,
-    modAtkPct, modPowerAdd, modPowerPct, modFinal,
+    modAtkPct, modPowerAdd, modPowerPct, modFinal, modDefPct,
   };
 }
 
@@ -1241,8 +1249,9 @@ function loadoutDamage(side, sp, otherSp) {
         atkStage: c.atkStage, defStage: c.defStage,
         powerMul: c.powerMul, finalMul: c.finalMul,
         targetHp,
-        // 状态面板里的攻击因子：出招这一侧的加成
+        // 状态面板里的攻击因子：出招这一侧的加成 + 挨打那一侧的防加成
         mods: side === 'a' ? c.modsA : c.modsB,
+        defMods: side === 'a' ? c.modsB : c.modsA,
       }).dmg;
     }
     const total = dmg * hit;
@@ -1336,9 +1345,12 @@ function sideStatusPanel(side, sp) {
     }).join('')
     : '';
 
-  // 攻击因子（真正进伤害计算）
+  // 攻击因子（真正进伤害计算）——顺序与参考图一致：
+  // 物攻 / 魔攻 / 物防 / 魔防 / 速度 / 技能威力+值 / 技能威力% / 独立乘区%
   const MOD_FIELDS = [
     ['patkPct', '物攻', '%'], ['satkPct', '魔攻', '%'],
+    ['pdefPct', '物防', '%'], ['sdefPct', '魔防', '%'],
+    ['spdAdd', '速度', '+'],
     ['powerAdd', '技能威力', '+'], ['powerPct', '技能威力', '%'],
     ['finalPct', '独立乘区', '%'],
   ];
@@ -1364,11 +1376,11 @@ function sideStatusPanel(side, sp) {
     <div class="st-hp">
       <div class="st-hp-head">
         <span>${isA ? '我方' : '对方'}当前血量</span>
-        <b>${hpPct}% <span class="desc">${cur}/${hpMax}</span></b>
+        <b><span class="st-hp-pct">${hpPct}%</span> <span class="desc st-hp-max">${cur}/${hpMax}</span></b>
       </div>
       <div class="st-hp-track">
         <div class="st-hp-bar"><i style="width:${hpPct}%"></i></div>
-        <input type="range" min="0" max="100" value="${hpPct}" data-st-hp="${side}"
+        <input type="range" min="0" max="100" step="1" value="${hpPct}" data-st-hp="${side}"
                aria-label="${isA ? '我方' : '对方'}当前血量百分比" title="左右拖动调整血量">
       </div>
     </div>
@@ -1537,8 +1549,9 @@ function calcSide(side, sp, otherSp, opts = {}) {
       atkStage: c.atkStage, defStage: c.defStage,
       powerMul: c.powerMul, finalMul: c.finalMul,
       targetHp: targetHpOf(isA ? 'b' : 'a', otherSp),
-      // 状态面板里的攻击因子：出招这一侧的加成
+      // 状态面板里的攻击因子：出招这一侧的加成 + 挨打那一侧的防加成
       mods: isA ? c.modsA : c.modsB,
+      defMods: isA ? c.modsB : c.modsA,
     });
     result = calcResultBlock(side, sp, otherSp, curSkill, r);
   }
@@ -2241,14 +2254,31 @@ function bindView() {
         render();
       });
     }
-    // 状态面板：血量百分比
+    // 状态面板：血量百分比。
+    // ⚠ 拖动过程中**只改数据 + 就地更新几个 DOM 节点，绝不重渲染** ——
+    //   重渲染会把正在拖的那个 range 换成新节点，浏览器随即丢失拖动状态，
+    //   表现就是"拖两下就断"，非常卡手（踩过）。
     for (const el of document.querySelectorAll('[data-st-hp]')) {
       el.addEventListener('input', () => {
         const side = el.dataset.stHp;
         const v = Math.max(0, Math.min(100, Number(el.value) || 0));
         if (side === 'a') STATE.calc.hpPctA = v; else STATE.calc.hpPctB = v;
-        softRerender('calc');
+        // 就地刷新：百分比、当前/总量、进度条宽度
+        const box = el.closest('.st-hp');
+        if (box) {
+          const sp = STATE.bySpirit.get(STATE.calc[side]);
+          const max = hpMaxOf(side, sp);
+          const cur = Math.round((max * v) / 100);
+          const pctEl = box.querySelector('.st-hp-pct');
+          const maxEl = box.querySelector('.st-hp-max');
+          const fillEl = box.querySelector('.st-hp-bar i');
+          if (pctEl) pctEl.textContent = `${v}%`;
+          if (maxEl) maxEl.textContent = `${cur}/${max}`;
+          if (fillEl) fillEl.style.width = `${v}%`;
+        }
       });
+      // 松手后再整体重算（让伤害结果跟上），此时拖动已结束，重渲染不影响手感
+      el.addEventListener('change', () => { softRerender('calc'); });
     }
     // 状态面板：星陨层数
     for (const el of document.querySelectorAll('[data-st-star]')) {

@@ -143,6 +143,28 @@ export function makeNode(tag, attrs = {}) {
       wireParents(node.children, node);
     },
   });
+  /**
+   * textContent：真实 DOM 里它替换掉所有子节点、只留纯文本。
+   * 桩里必须**真的写进 children** —— 早期只设了 _html，于是 `el.textContent = x`
+   * 之后再读 innerHTML 还是旧值，害我误判"就地更新没生效"，查了半天（踩过）。
+   * ⚠ 文本节点的内容是 `text` 字段（parseHtml 的产物），不是 `_html`。
+   */
+  Object.defineProperty(node, 'textContent', {
+    // 文本节点自身的值是 `text`；元素节点则把子节点的文字拼起来
+    get: () => (node.tagName === '#text' ? (node.text ?? '') : node.children.map((c) => c.textContent ?? '').join('')),
+    set: (v) => {
+      const text = String(v);
+      if (text === '') {
+        node.children = [];
+        node._text = '';
+        return;
+      }
+      const t = makeNode('#text', {});
+      t.text = text;
+      node.children = [t];
+      wireParents(node.children, node);
+    },
+  });
   // dataset：把 data-* 属性映射成驼峰
   node.dataset = {};
   for (const [k, v] of Object.entries(attrs)) {
