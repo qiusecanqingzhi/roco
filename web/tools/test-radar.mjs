@@ -274,8 +274,36 @@ ok(api.typeEffect(tid('翼系'), [tid('草系')]) === 2, `翼系打草系 ×2（
 ok(api.typeEffect(tid('火系'), [tid('草系')]) === 2, `火系打草系 ×2（实际 ${api.typeEffect(tid('火系'), [tid('草系')])}）`);
 ok(api.typeEffect(tid('火系'), [tid('水系')]) === 0.5, `火系打水系 ×0.5（实际 ${api.typeEffect(tid('火系'), [tid('水系')])}）`);
 ok(api.typeEffect(tid('水系'), [tid('火系')]) === 2, `水系打火系 ×2（实际 ${api.typeEffect(tid('水系'), [tid('火系')])}）`);
-// 双系别相乘
-ok(api.typeEffect(tid('火系'), [tid('草系'), tid('水系')]) === 1, '打「草+水」双系：×2 × ×0.5 = ×1');
+// 双系别：按**克制次数**叠加，不是把两个单系倍率相乘
+//   火打草(+1) 与 火打水(-1) 抵消 -> ×1
+ok(api.typeEffect(tid('火系'), [tid('草系'), tid('水系')]) === 1, '打「草+水」双系：+1 与 -1 抵消 = ×1');
+//   两个系都被克制 -> ×3（**不是** ×2 ×2 = ×4）
+//   圣水迪莫是「光系 + 水系」，草系打这两个都是克制
+ok(api.typeEffect(tid('草系'), [tid('光系'), tid('水系')]) === 3, '打「光+水」双系（两个系都被草克制）= ×3 而不是 ×4');
+//   两个系都抵抗 -> ×¼
+ok(api.typeEffect(tid('武系'), [tid('虫系'), tid('萌系')]) === 0.25, '打「虫+萌」双系（两个系都抵抗武系）= ×¼');
+
+// 系别克制页：单系矩阵保持三档，双系结果由「双系组合速查」给出
+{
+  A2.view = 'types';
+  ids.get('app').innerHTML = '';
+  api.render();
+  const appT = ids.get('app')._el;
+  const matrix = appT.querySelector('.matrix');
+  ok(!!matrix && matrix.querySelectorAll('tbody tr').length === 18, '系别矩阵是 18×18 单系表');
+  ok(!/×3/.test(matrix.innerHTML), '单系矩阵里不出现 ×3（双克制只发生在双系精灵身上）');
+  const dbl = [...appT.querySelectorAll('.panel')].find((b) => /双系组合速查/.test(b.innerHTML));
+  ok(!!dbl, '有「双系组合速查」区块');
+  if (dbl) {
+    const rows = dbl.querySelectorAll('tbody tr');
+    ok(rows.length > 50, `列出 ${rows.length} 组存在 ×3 或 ×¼ 的组合`);
+    ok(/两个系都被克制/.test(dbl.innerHTML) && /不是 ×4/.test(dbl.innerHTML), '说明里写明双克制 = ×3（不是 ×4）');
+    ok(/两个系都抵抗/.test(dbl.innerHTML) && /×¼/.test(dbl.innerHTML), '说明里写明双抵抗 = ×¼');
+  }
+  A2.view = 'spirits';
+  ids.get('app').innerHTML = '';
+  api.render();
+}
 
 // 完整公式：复现参考页的 332
 // 个体值用 60（= 参考页面板 234/226 对应的那组）
@@ -701,7 +729,23 @@ console.log('\n· 状态造成的伤害（含元素克制）');
   }
   ok(api.STATUS_EFFECTS.burn.pct === 2 && api.STATUS_EFFECTS.burn.element === '火系', '灼烧 = 火系 2%');
   ok(api.STATUS_EFFECTS.poison.pct === 3 && api.STATUS_EFFECTS.poison.element === '毒系', '中毒 = 毒系 3%');
-  ok(api.STATUS_EFFECTS.freeze.pct === 5 && api.STATUS_EFFECTS.freeze.element === '冰系', '冻结 = 冰系 5%');
+  // 冻结与寄生**不受克制关系影响**（element 为 null），寄生按最大生命 6%
+  ok(api.STATUS_EFFECTS.freeze.pct === 5 && api.STATUS_EFFECTS.freeze.element === null, '冻结 = 5%、不受克制');
+  ok(api.STATUS_EFFECTS.parasite.pct === 6 && api.STATUS_EFFECTS.parasite.element === null, '寄生 = 最大生命 6%、不受克制');
+  ok(api.STATUS_EFFECTS['thorn-mark'].pct === 6 && api.STATUS_EFFECTS['thorn-mark'].element === null, '棘刺印记 = 6%、不受克制');
+  // 双克制只有 ×3、双抵抗是 ×¼，且这两个倍率确实会出现在数据里
+  {
+    const mults = new Set();
+    for (const sp of A2.data.spirits) {
+      for (const t of A2.data.meta.types) mults.add(api.typeEffect(t.id, sp.types ?? []));
+    }
+    ok(mults.has(3), '双系数据里确实存在 ×3 双克制');
+    ok(mults.has(0.25), '双系数据里确实存在 ×¼ 双抵抗');
+    ok(!mults.has(4), '不存在 ×4 —— 双克制按规则算 ×3 而不是相乘');
+    ok(!mults.has(0.125), '不存在 ×0.125 —— 双抵抗按规则算 ×¼');
+    const sorted = [...mults].sort((a, b) => a - b);
+    ok(sorted.join(',') === '0.25,0.5,1,2,3', `倍率只可能是 0.25/0.5/1/2/3（实际 ${sorted.join(',')}）`);
+  }
 
   // 奇丽花是草系：火系打草系应触发克制
   A2.calc.a = '20:1'; A2.calc.b = '43:1'; A2.calc.skillA = 7150060;
@@ -777,14 +821,45 @@ console.log('\n· 状态造成的伤害（含元素克制）');
     ok(/会力竭/.test(txtD(dmgBlock('b'))), '页面上标出「会力竭」');
   }
 
-  // 不带元素的状态（棘刺印记）不进这一块（它没有元素，没法算克制）
+  // 不受克制的状态也要进这块（只是不乘克制），并标出「不受克制」
   A2.calc.statusB = { picks: ['thorn-mark'], star: 0, layers: {} };
   A2.calc.statusPctB = {};
   A2.calc.hpPctB = 100;
   ids.get('app').innerHTML = '';
   api.render();
-  ok(api.statusDamageOf('b', A2.bySpirit.get('43:1')).rows.length === 0,
-    '无元素的状态（棘刺印记）不进"状态造成的伤害"');
+  {
+    const dd = api.statusDamageOf('b', A2.bySpirit.get('43:1'));
+    ok(dd.rows.length === 1 && dd.rows[0].name === '棘刺印记', '无元素的状态也进"状态造成的伤害"');
+    ok(dd.rows[0].effective === false, '它被标记为 effective=false（不走克制）');
+    ok(dd.rows[0].eff === 1, `它的倍率是 ×1（实际 ×${dd.rows[0].eff}）`);
+    ok(/不受克制/.test(txtD(dmgBlock('b'))), '页面上标出「不受克制」');
+  }
+  // 寄生：最大生命 6%、不受克制
+  A2.calc.statusB = { picks: ['parasite'], star: 0, layers: {} };
+  A2.calc.statusPctB = {};
+  ids.get('app').innerHTML = '';
+  api.render();
+  {
+    const spP = A2.bySpirit.get('43:1');
+    const dd = api.statusDamageOf('b', spP);
+    ok(dd.rows.length === 1, '寄生进这块');
+    ok(dd.rows[0].pct === 6, `寄生默认 6%（实际 ${dd.rows[0].pct}）`);
+    ok(dd.rows[0].effective === false && dd.rows[0].eff === 1, '寄生不受克制影响');
+    ok(dd.total === Math.floor((api.hpMaxOf('b', spP) * 6) / 100),
+      `寄生掉血 = floor(面板生命 × 6%)（实际 ${dd.total}）`);
+  }
+  // 冻结：不受克制，按层数
+  A2.calc.statusB = { picks: ['freeze'], star: 0, layers: { freeze: 2 } };
+  A2.calc.statusPctB = {};
+  ids.get('app').innerHTML = '';
+  api.render();
+  {
+    const spF = A2.bySpirit.get('43:1');
+    const dd = api.statusDamageOf('b', spF);
+    ok(dd.rows[0].effective === false, '冻结不受克制');
+    ok(dd.rows[0].pctSum === 10, `2 层 × 5% = 10%（实际 ${dd.rows[0].pctSum}%）`);
+    ok(dd.total === Math.floor((api.hpMaxOf('b', spF) * 10) / 100), '冻结掉血按层数算且不乘克制');
+  }
 
   // 没选任何状态时给出提示
   A2.calc.statusB = { picks: [], star: 0, layers: {} };

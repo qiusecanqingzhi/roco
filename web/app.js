@@ -710,6 +710,45 @@ function viewTypes() {
   const mostTough = [...tally].sort((a, b) => b.resist - a.resist).slice(0, 4);
   const chip = (x) => `<span class="pill">${badge(x.t.id)}${x.weak} 个系别克制 / ${x.resist} 个系别抵抗</span>`;
 
+  /**
+   * 双系组合速查。
+   * 上面那张矩阵是**单系**的（只有克制 / 普通 / 抵抗三档），但双系精灵不是把两个单系
+   * 倍率相乘 —— 游戏里：两个系都被克制是 ×3（不是 ×4），两个系都抵抗是 ×¼。
+   * 所以单系矩阵看不出双系的结果，这里按"打到某双系组合"列出 ×3 与 ×¼ 的各有哪些。
+   */
+  const dblRows = [];
+  for (let i = 0; i < tlist.length; i++) {
+    for (let j = i + 1; j < tlist.length; j++) {
+      const pair = [tlist[i], tlist[j]];
+      const ids = pair.map((t) => t.id);
+      const triple = [];   // 双克制 ×3
+      const quarter = [];  // 双抵抗 ×¼
+      for (const atk of tlist) {
+        const e = typeEffect(atk.id, ids);
+        if (e === 3) triple.push(atk);
+        if (e === 0.25) quarter.push(atk);
+      }
+      if (triple.length || quarter.length) dblRows.push({ pair, triple, quarter });
+    }
+  }
+  const dblBlock = dblRows.length ? `
+  <div class="panel" style="margin-top:12px">
+    <h3 style="margin-top:0">双系组合速查 <span class="n">${dblRows.length} 组有 ×3 或 ×¼</span></h3>
+    <div class="desc" style="margin-bottom:8px">
+      双系精灵按<b>次数</b>算，不把两个单系倍率相乘：两个系都被克制 = <b>×3</b>（不是 ×4），
+      两个系都抵抗 = <b>×¼</b>。下表只列出现 ×3 或 ×¼ 的组合。
+    </div>
+    <div class="table-wrap" style="max-height:420px;overflow:auto"><table>
+      <thead><tr><th>双系组合</th><th class="mid">×3 双克制（打它）</th><th class="mid">×¼ 双抵抗（打它）</th></tr></thead>
+      <tbody>${dblRows.map((r) => `
+        <tr>
+          <td>${r.pair.map((t) => badge(t.id)).join(' ')}</td>
+          <td class="mid">${r.triple.length ? r.triple.map((t) => badge(t.id)).join(' ') : '<span class="desc">—</span>'}</td>
+          <td class="mid">${r.quarter.length ? r.quarter.map((t) => badge(t.id)).join(' ') : '<span class="desc">—</span>'}</td>
+        </tr>`).join('')}</tbody>
+    </table></div>
+  </div>` : '';
+
   return `
   <div class="page-head">
     <h1>系别克制</h1>
@@ -736,7 +775,8 @@ function viewTypes() {
     <tbody>${rows}</tbody>
   </table></div>
   ${immun ? `<div class="panel"><h3 style="margin:0 0 8px;font-size:15px">状态免疫（异常状态，与伤害倍率无关）</h3>
-    <table><tbody>${immun}</tbody></table></div>` : ''}`;
+    <table><tbody>${immun}</tbody></table></div>` : ''}
+  ${dblBlock}`;
 }
 
 /* ============================================================
@@ -891,16 +931,40 @@ function panelOf(sp, which, iv = 0, nature = 'neutral') {
  * 只靠"看起来像不像"猜语义会猜反 —— 早先版本把 1 当成 ×0.5、-1 当成 ×0.25，
  * 整个系别克制页都是错的。这个映射必须以源数据的 effect_values 为准。
  * 另外这个游戏没有 ×0 免疫（全库只有 0/1/-1 三种取值）。
+ *
+ * 双系精灵不按"单系倍率相乘"算，而是按游戏规则：
+ *   两个系都被克制 -> ×3（**不是** ×2 ×2 = ×4，即"双克制只有三倍"）
+ *   两个系都抵抗   -> ×0.25（单系 ×0.5，叠加后 ×0.25，即"抵抗是四倍"）
+ * 所以这里不能简单地把两个 1（=×2）乘起来，否则双克制会算成 ×4。
  */
-const EFFECT_MULT = { 1: 2, 0: 1, '-1': 0.5, 2: 4, '-2': 0.25 };
+const EFFECT_MULT = { 1: 2, 0: 1, '-1': 0.5 };
+// 叠加结果：按克制/抵抗的**次数**查表，而不是把单系倍率相乘
+const STACKED_MULT = {
+  '2': 3,       // 双克制
+  '1': 2,       // 单克制
+  '0': 1,       // 中性
+  '-1': 0.5,    // 单抵抗
+  '-2': 0.25,   // 双抵抗
+};
 
-/** 被攻击方可能有两个系别，倍率相乘。
+/** 被攻击方可能有两个系别。
  *  ⚠ 参数是"系别 id 的数组"（spirit.types 存的是数字 id，如 [15]），
  *  不是名字。早先版本把名字当作 id 传进来，结果永远命中不到，克制恒为 ×1。
  *  技能侧同理：用 sk.typeId（数字），不要用 sk.type（名字）。 */
 function typeEffect(atkTypeId, defenderTypeIds) {
   const atk = typeof atkTypeId === 'number' ? STATE.typeById.get(atkTypeId) : STATE.typeByName.get(atkTypeId);
   if (!atk) return 1;
+  // 把每个防御系别的 ±1/0 累加成"克制次数"，再查表得最终倍率
+  let score = 0;
+  for (const raw of defenderTypeIds ?? []) {
+    const def = typeof raw === 'number' ? STATE.typeById.get(raw) : STATE.typeByName.get(raw);
+    if (!def) continue;
+    const v = STATE.effect.get(`${atk.id}:${def.id}`);
+    if (v === 1 || v === -1) score += v;
+  }
+  const stacked = STACKED_MULT[String(Math.max(-2, Math.min(2, score)))];
+  if (stacked != null) return stacked;
+  // 兜底：超出 ±2 时退回逐项相乘（当前数据不会走到这里）
   let mult = 1;
   for (const raw of defenderTypeIds ?? []) {
     const def = typeof raw === 'number' ? STATE.typeById.get(raw) : STATE.typeByName.get(raw);
@@ -1229,9 +1293,6 @@ function loadoutDamage(side, sp, otherSp) {
     if (!sk) { rows.push({ i, sk: null, pow: 0, hit: 1, dmg: 0, total: 0 }); return; }
     const pow = pows[i] != null ? pows[i] : (sk.dmgMax ?? 0);
     const hit = hits[i] ?? 1;
-    // 出招这一侧自己能打多少，只取决于自己的攻 + 技能，与对面选没选技能无关。
-    // 所以这里用一个"基于自己"的攻防项（物攻->物防、魔攻->魔防），
-    // 而不是外面传进来的 defKey（那个是"对面打我会用到的防"，对面没选技能时是 null）。
     // 出招这一侧自己能打多少，只取决于自己的攻 + 技能 + 对面的防，
     // 与"对面选没选技能"无关（外面传进来的 defKey 是"对面打我会用到的防"，
     // 对面没选技能时是 null，拿它当守卫会让整块算不出来）。
@@ -1412,8 +1473,8 @@ function statusDamageBlock(side, sp) {
   if (!d.rows.length) {
     return `<div class="st-dmg st-dmg-empty">
       <div class="st-dmg-head"><span>状态造成的伤害</span></div>
-      <div class="desc">选中「中毒 / 灼烧 / 冻结 / 寄生 / 引电 / 中毒印记 / 棘刺印记」这类会造成伤害的状态后，
-        这里会按元素克制算出实际掉血。</div>
+      <div class="desc">选中「中毒 / 灼烧 / 冻结 / 寄生 / 引电 / 中毒印记 / 棘刺印记 / 星陨印记」这类会造成伤害的状态后，
+        这里会按层数与元素克制算出实际掉血（冻结与寄生不受克制关系影响）。</div>
     </div>`;
   }
   const pcts = side === 'a' ? STATE.calc.statusPctA : STATE.calc.statusPctB;
@@ -1421,21 +1482,23 @@ function statusDamageBlock(side, sp) {
     const layers = side === 'a' ? STATE.calc.statusA.layers : STATE.calc.statusB.layers;
     const curLayers = layers?.[r.key] ?? r.layers;
     const pctVal = pcts?.[r.key] ?? r.pct;
-    const effTxt = !r.effective ? ''
-      : r.eff === 2 ? '<span class="mx2">×2 克制</span>'
-        : r.eff === 0.5 ? '<span class="mxh">×½ 抵抗</span>'
-          : r.eff === 4 ? '<span class="mx2">×4 双克制</span>'
+    // element 为 null 的状态（冻结 / 寄生 / 棘刺）不吃克制，明确标出来
+    const effTxt = !r.effective
+      ? '<span class="desc">不受克制</span>'
+      : r.eff === 3 ? '<span class="mx2">×3 双克制</span>'
+        : r.eff === 2 ? '<span class="mx2">×2 克制</span>'
+          : r.eff === 0.5 ? '<span class="mxh">×½ 抵抗</span>'
             : r.eff === 0.25 ? '<span class="mxh">×¼ 双抵抗</span>' : '<span class="desc">×1</span>';
     return `<div class="st-dmg-row">
       <div class="st-dmg-name">
         <b>${esc(r.name)}</b>
-        <span class="desc">${esc(r.element)} · ${esc(r.when)}${r.immune && r.immune !== '—' ? ` · ${esc(r.immune)}免疫` : ''}</span>
+        <span class="desc">${r.element ? `${esc(r.element)} · ` : ''}${esc(r.when)}${r.immune && r.immune !== '—' ? ` · ${esc(r.immune)}免疫` : ''}</span>
       </div>
-      <label class="st-dmg-in">层
+      ${r.per === 'stack' ? `<label class="st-dmg-in">层
         <input type="number" min="0" max="99" value="${curLayers}" data-st-layers="${side}:${r.key}" aria-label="${esc(r.name)}层数">
-      </label>
-      <label class="st-dmg-in">每层
-        <input type="number" min="0" max="100" step="0.5" value="${pctVal}" data-st-pct="${side}:${r.key}" aria-label="${esc(r.name)}每层百分比">
+      </label>` : '<span class="desc st-dmg-once">一次性</span>'}
+      <label class="st-dmg-in">${r.per === 'stack' ? '每层' : '扣血'}
+        <input type="number" min="0" max="100" step="0.5" value="${pctVal}" data-st-pct="${side}:${r.key}" aria-label="${esc(r.name)}百分比">
         <span class="st-mod-u">%</span>
       </label>
       <div class="st-dmg-out">
@@ -1580,7 +1643,7 @@ function targetHpOf(side, sp) {
  * 挂在既有的状态集（STATE.statuses，来自本项目的术语库）上，不另造一份数据 ——
  * 只补上"程序要用、词条描述里是自然语言"的那几个字段。
  *
- *   element   用于克制计算（与本项目 types 匹配）
+ *   element   用于克制计算（与本项目 types 匹配）；为 null 表示**不受克制关系影响**
  *   pct       伤害百分比（默认值取自词条描述，用户可改）
  *   per       按什么算：'stack' 百分比 × 层数；'once' 只看是否生效
  *   when      结算时机（只作展示）
@@ -1590,14 +1653,16 @@ const STATUS_EFFECTS = {
   burn: { element: '火系', pct: 2, per: 'stack', when: '回合结束', immune: '火系精灵' },
   poison: { element: '毒系', pct: 3, per: 'stack', when: '回合结束', immune: '毒系精灵' },
   'poison-mark': { element: '毒系', pct: 3, per: 'once', when: '回合结束', immune: '—' },
-  freeze: { element: '冰系', pct: 5, per: 'stack', when: '立即/回合结束', immune: '冰系精灵', note: '当前生命低于该比例时力竭' },
-  parasite: { element: '草系', pct: 2, per: 'stack', when: '回合结束', immune: '草系精灵', note: '这部分生命由寄生来源回复' },
+  // 冻结与寄生按规则**不吃克制关系**（element: null）
+  freeze: { element: null, pct: 5, per: 'stack', when: '从左侧开始扣', immune: '冰系精灵', note: '按最大生命的比例从左侧扣除，不受克制关系影响；当前生命低于该比例时力竭' },
+  parasite: { element: null, pct: 6, per: 'once', when: '回合结束', immune: '草系精灵', note: '按最大生命的 6% 扣除，不受克制关系影响；这部分由寄生来源回复' },
   'conductive-charge': { element: '电系', pct: 25, per: 'once', when: '每攒满 2 层立即', immune: '电系精灵' },
-  'thorn-mark': { element: '—', pct: 6, per: 'once', when: '离场换人时', immune: '—' },
+  'thorn-mark': { element: null, pct: 6, per: 'once', when: '离场换人时', immune: '—' },
   'starfall-mark': { element: '幻系', pct: 0, per: 'stack', when: '被非幻系技能攻击时', immune: '幻系精灵', note: '每层系数官方未给，pct 留 0 可自行填' },
 };
 
-/** 「会造成伤害的状态」在某个精灵身上能打出多少（含元素克制） */
+/** 「会造成伤害的状态」在某个精灵身上能打出多少。
+ *  有元素的按元素克制算；element 为 null 的（冻结/寄生/棘刺）**不受克制关系影响**。 */
 function statusDamageOf(side, sp) {
   const st = side === 'a' ? STATE.calc.statusA : STATE.calc.statusB;
   const pcts = side === 'a' ? STATE.calc.statusPctA : STATE.calc.statusPctB;
@@ -1606,11 +1671,12 @@ function statusDamageOf(side, sp) {
   const rows = [];
   for (const key of st.picks ?? []) {
     const meta = STATUS_EFFECTS[key];
-    if (!meta || !meta.element || meta.element === '—') continue;
+    if (!meta) continue;
     const def = STATE.statusByKey.get(key);
     const layers = st.layers?.[key] ?? 1;
     const pct = Number(pcts?.[key] ?? meta.pct) || 0;
-    const typeId = STATE.typeByName.get(meta.element)?.id;
+    // element 为 null -> 不受克制；有元素才去查克制表
+    const typeId = meta.element ? STATE.typeByName.get(meta.element)?.id : null;
     const eff = typeId != null ? typeEffect(typeId, sp.types ?? []) : 1;
     const perTurnPct = meta.per === 'stack' ? pct * layers : pct;
     const raw = Math.floor((maxHp * perTurnPct) / 100 * eff);
@@ -1621,8 +1687,12 @@ function statusDamageOf(side, sp) {
     });
   }
   const total = rows.reduce((a, r) => a + r.raw, 0);
-  return { rows, total, maxHp, curHp, // 掉血不会超过当前生命（最多力竭）
-    capped: Math.min(total, curHp), lethal: total >= curHp && curHp > 0 };
+  return {
+    rows, total, maxHp, curHp,
+    // 掉血不会超过当前生命（最多力竭）
+    capped: Math.min(total, curHp),
+    lethal: total >= curHp && curHp > 0,
+  };
 }
 
 /** 一侧的面板 + 技能选择。加点用与详情页同一套组件（个体按钮 + 性格逐项开关）
@@ -1709,8 +1779,12 @@ function withCalcSide(side, fn) {
 
 /** 计算过程逐步展开 */
 function calcResultBlock(side, atkSp, defSp, sk, r) {
-  const zone = r.typeEff === 2 ? '×2 克制' : r.typeEff === 1 ? '×1 普通'
-    : r.typeEff === 0.5 ? '×½ 抵抗' : r.typeEff === 0.25 ? '×¼ 强抵抗' : r.typeEff === 0 ? '×0 免疫' : `×${r.typeEff}`;
+  // 克制文案：双克制是 ×3（不是 ×4），双抵抗是 ×¼
+  const zone = r.typeEff === 3 ? '×3 双克制'
+    : r.typeEff === 2 ? '×2 克制'
+      : r.typeEff === 1 ? '×1 普通'
+        : r.typeEff === 0.5 ? '×½ 抵抗'
+          : r.typeEff === 0.25 ? '×¼ 双抵抗' : `×${r.typeEff}`;
   const stabTxt = r.stab > 1 ? '×1.25（本系）' : '×1';
   const hits = r.dmg <= 0 ? '—' : (Number.isFinite(r.hits) ? `${r.hits} 下` : '—');
   return `
@@ -2281,8 +2355,8 @@ function bindView() {
       } else {
         el.addEventListener('input', debounce(() => {
           const raw = el.value === '' ? '' : Number(el.value);
-          if (key === 'hp') STATE.calc[el.dataset.side === 'a' ? 'hpA' : 'hpB'] = raw === '' ? 0 : raw;
-          else if (key === 'skillPct') STATE.calc.skillPct = (raw === '' ? 0 : raw) / 100;
+          // 血量已统一到状态面板的百分比滑块，这里不再处理 data-calc="hp"
+          if (key === 'skillPct') STATE.calc.skillPct = (raw === '' ? 0 : raw) / 100;
           else if (raw !== '') STATE.calc[key] = raw;
           // 只重画结果区，避免输入框失焦
           softRerender('calc');
