@@ -1456,7 +1456,7 @@ function sideStatusPanel(side, sp, otherSp = null) {
     <div class="st-star">
       <div class="st-hp-head">
         <span>${isA ? '我方' : '对方'}被附加星陨 <b>${st.star ?? 0}</b> 层</span>
-        <input type="number" min="0" max="9" value="${st.star ?? 0}" data-st-star="${side}" aria-label="星陨层数">
+        <input type="number" min="0" max="99" value="${st.star ?? 0}" data-st-star="${side}" aria-label="星陨层数">
       </div>
       <div class="desc">使用非幻系技能攻击持有该印记的精灵时，消耗全部层数造成额外幻系伤害（幻系精灵不会获得）</div>
     </div>
@@ -1490,7 +1490,10 @@ function statusDamageBlock(side, sp, otherSp = null) {
   const pcts = side === 'a' ? STATE.calc.statusPctA : STATE.calc.statusPctB;
   const rows = d.rows.map((r) => {
     const layers = side === 'a' ? STATE.calc.statusA.layers : STATE.calc.statusB.layers;
-    const curLayers = layers?.[r.key] ?? r.layers;
+    // 星陨层数的真值是 st.star（面板上的「星陨层数」共用它）
+    const curLayers = r.key === 'starfall-mark'
+      ? ((side === 'a' ? STATE.calc.statusA.star : STATE.calc.statusB.star) ?? 0)
+      : (layers?.[r.key] ?? r.layers);
     const pctVal = pcts?.[r.key] ?? r.pct;
     // element 为 null 的状态（冻结 / 寄生 / 棘刺）不吃克制，明确标出来
     const effTxt = !r.effective
@@ -1736,7 +1739,8 @@ function statusDamageOf(side, sp, opts = {}) {
     const meta = STATUS_EFFECTS[key];
     if (!meta) continue;
     const def = STATE.statusByKey.get(key);
-    const layers = st.layers?.[key] ?? 1;
+    // 星陨层数只有一份真值 st.star（面板上的「星陨层数」与这一行的层数共用它）
+    const layers = key === 'starfall-mark' ? (st.star ?? 0) : (st.layers?.[key] ?? 1);
     // element 为 null -> 不受克制；有元素才去查克制表
     const typeId = meta.element ? STATE.typeByName.get(meta.element)?.id : null;
     const eff = typeId != null ? typeEffect(typeId, sp.types ?? []) : 1;
@@ -2563,22 +2567,29 @@ function bindView() {
       // 松手后再整体重算（让伤害结果跟上），此时拖动已结束，重渲染不影响手感
       el.addEventListener('change', () => { softRerender('calc'); });
     }
-    // 状态面板：星陨层数
+    // 状态面板：星陨层数（上限 99；与「状态造成的伤害」里那行共用同一份数据）
     for (const el of document.querySelectorAll('[data-st-star]')) {
       el.addEventListener('change', () => {
         const side = el.dataset.stStar;
-        const v = Math.max(0, Math.min(9, Math.round(Number(el.value) || 0)));
-        if (side === 'a') STATE.calc.statusA.star = v; else STATE.calc.statusB.star = v;
+        const v = Math.max(0, Math.min(99, Math.round(Number(el.value) || 0)));
+        const st = side === 'a' ? STATE.calc.statusA : STATE.calc.statusB;
+        st.star = v;
+        // 星陨印记那行的层数跟着同步，免得同一件事出现两个数
+        st.layers ??= {};
+        st.layers['starfall-mark'] = v;
         render();
       });
     }
-    // 状态伤害：层数
+    // 状态伤害：层数（上限 99）
     for (const el of document.querySelectorAll('[data-st-layers]')) {
       el.addEventListener('change', () => {
         const [side, key] = el.dataset.stLayers.split(':');
         const st = side === 'a' ? STATE.calc.statusA : STATE.calc.statusB;
+        const v = Math.max(0, Math.min(99, Math.round(Number(el.value) || 0)));
+        // 星陨层数统一写在 st.star（面板上那个输入框也读它）
+        if (key === 'starfall-mark') st.star = v;
         st.layers ??= {};
-        st.layers[key] = Math.max(0, Math.min(99, Math.round(Number(el.value) || 0)));
+        st.layers[key] = v;
         render();
       });
     }

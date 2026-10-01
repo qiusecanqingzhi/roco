@@ -734,6 +734,32 @@ console.log('\n· 星陨印记：显示威力 = 层数² + 24 × 层数 − 24')
   ok(api.starfallPower(0) === 0, '0 层威力 0（公式值 -24 被夹掉）');
   ok(api.statusModeOf('starfall-mark') === 'power', '星陨走 power 模式（不是百分比掉血）');
   ok(api.statusModeOf('burn') === 'pct', '灼烧仍走百分比模式');
+  // 层数上限是 99
+  {
+    A2.calc.statusB = { picks: ['starfall-mark'], star: 0, layers: { 'starfall-mark': 0 } };
+    A2.view = 'calc';
+    ids.get('app').innerHTML = '';
+    api.render();
+    const starEl = () => ids.get('app')._el.querySelector('[data-st-star="b"]');
+    const rowEl = () => ids.get('app')._el.querySelector('[data-st-layers="b:starfall-mark"]');
+    ok(String(starEl().max || starEl().getAttribute('max')) === '99', '「星陨层数」上限 99');
+    ok(String(rowEl().max || rowEl().getAttribute('max')) === '99', '状态伤害那行的层数上限 99');
+    // 两处是同一份真值，改一个另一个跟着变
+    const a1 = starEl(); a1.value = '40'; a1.dispatch('change');
+    ok(A2.calc.statusB.star === 40, `在「星陨层数」填 40 -> star = ${A2.calc.statusB.star}`);
+    ok(Number(rowEl().value) === 40, '状态伤害那行同步显示 40');
+    const b1 = rowEl(); b1.value = '99'; b1.dispatch('change');
+    ok(A2.calc.statusB.star === 99, `在状态伤害那行填 99 -> star = ${A2.calc.statusB.star}`);
+    ok(Number(starEl().value) === 99, '「星陨层数」同步显示 99');
+    ok(api.starfallPower(99) === 12153, `99 层威力 = ${api.starfallPower(99)}`);
+    const c1 = starEl(); c1.value = '500'; c1.dispatch('change');
+    ok(A2.calc.statusB.star === 99, '超过 99 会被夹到 99');
+    const d1 = starEl(); d1.value = '-5'; d1.dispatch('change');
+    ok(A2.calc.statusB.star === 0, '负数会被夹到 0');
+    // 连击数上限还是 9，没被误改
+    const hitEl = ids.get('app')._el.querySelector('[data-lo-hit]');
+    ok(!!hitEl && String(hitEl.max || hitEl.getAttribute('max')) === '9', '四技能槽连击数上限仍是 9');
+  }
 
   // 物理技能触发 vs 魔法技能触发：攻防面板不同，结果应不同
   A2.calc.a = '20:1'; A2.calc.b = '43:1'; A2.calc.skillA = 7150060;

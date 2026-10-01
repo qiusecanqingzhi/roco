@@ -87,6 +87,8 @@ console.log('\n④ 换层数会变（单调）');
   const spA = A2.bySpirit.get('20:1');
   const sk = A2.bySkill.get(7150060);
   const pw = (n) => {
+    // 层数的真值是 st.star（与面板上「星陨层数」共用）
+    A2.calc.statusB.star = n;
     A2.calc.statusB.layers['starfall-mark'] = n;
     return api.statusDamageOf('b', spB, { attacker: spA, skill: sk }).rows[0].power;
   };
