@@ -1026,9 +1026,12 @@ function calcDamage(atkSp, defSp, sk, opts = {}) {
   const modPowerAdd = mods?.powerAdd ?? 0;
   const modPowerPct = mods?.powerPct ?? 0;
   const effective = (basePower + flatAdd + modPowerAdd) * (1 + skillPct + modPowerPct / 100);
-  // 本系加成：技能的系别 id 出现在自身系别里（spirit.types 是 id 数组）
-  const stab = (atkSp.types ?? []).includes(sk?.typeId) ? 1.25 : 1;
-  const typeEff = typeEffect(sk?.typeId, defSp.types ?? []);
+  // 系别：默认用技能自身的系别；opts.typeOverrideId 允许覆盖
+  // （星陨印记那段额外伤害是幻系，跟触发它的技能是什么系无关）
+  const dmgTypeId = opts.typeOverrideId ?? sk?.typeId;
+  // 本系加成：这个系别出现在攻击方自身系别里（spirit.types 是 id 数组）
+  const stab = (atkSp.types ?? []).includes(dmgTypeId) ? 1.25 : 1;
+  const typeEff = typeEffect(dmgTypeId, defSp.types ?? []);
   const shown = Math.round(effective * stab * typeEff * atkZone * powerMul);
 
   const lvCoef = levelCoef(level);
@@ -1042,7 +1045,7 @@ function calcDamage(atkSp, defSp, sk, opts = {}) {
 
   return {
     basePower, flatAdd, skillPct, effective, atkStat, defStat, atkKey, defKey, isPhysical, isStatus,
-    stab, typeEff, atkZone, powerMul, shown, lvCoef, level, inner, finalMul, random, dmg,
+    dmgTypeId, stab, typeEff, atkZone, powerMul, shown, lvCoef, level, inner, finalMul, random, dmg,
     targetHp, hits, pct: targetHp > 0 ? dmg / targetHp : 0,
     modAtkPct, modPowerAdd, modPowerPct, modFinal, modDefPct,
   };
@@ -1356,14 +1359,16 @@ function statusHelpDialog() {
  * 数据来自本项目自己的术语库（out/<locale>/status.jsonl，由 tools/build-status-data.mjs
  * 从 roco.world 的 description_notes 抽取），不依赖任何第三方整理的数据。
  *
- * 每侧的结构（参考对战模拟器"状态"区的组织方式，界面为本项目自己实现）：
- *   ① 当前生效的状态卡片（名称 / 分类 / 描述 / 生效开关）
- *   ② 一组"攻击因子"：物攻% 魔攻% 技能威力% 技能威力值 独立乘区%
- *      这些会真正进入伤害计算（见 calcDamage 的 mods）
- *   ③ 血量条：当前血量 / 总血量 + 百分比滑块
- *   ④ 星陨印记层数：每层带来的伤害（幻系额外伤害按层数累加）
+ * 每侧的结构：
+ *   ① 当前生效的状态卡片（名称 / 分类 / 描述 / 引用技能数）
+ *   ② 一组"攻击因子"：物攻% 魔攻% 物防% 魔防% 速度 技能威力+值 技能威力% 独立乘区%
+ *      这些会真正进入伤害计算（见 calcDamage 的 mods / defMods）
+ *   ③ 血量条：当前血量 / 总血量 + 可拖动滑块
+ *   ④ 星陨印记层数
+ *   ⑤ 状态造成的伤害（百分比掉血，或星陨那样按威力走标准公式）
+ *   ⑥ 状态选择区（前四类分类）
  */
-function sideStatusPanel(side, sp) {
+function sideStatusPanel(side, sp, otherSp = null) {
   const c = STATE.calc;
   const isA = side === 'a';
   const st = isA ? c.statusA : c.statusB;
@@ -1456,20 +1461,25 @@ function sideStatusPanel(side, sp) {
       <div class="desc">使用非幻系技能攻击持有该印记的精灵时，消耗全部层数造成额外幻系伤害（幻系精灵不会获得）</div>
     </div>
 
-    ${statusDamageBlock(side, sp)}
+    ${statusDamageBlock(side, sp, otherSp)}
 
     <div class="st-picker">${pickHtml}</div>
   </div>`;
 }
 
 /**
- * 「状态造成的伤害」区块：把该侧已选状态里**会造成伤害**的那些列出来，
- * 每行可填层数与百分比，并按元素克制算出实际掉血。
- * 灼烧/中毒这类描述里写的是"2%/3% 生命的某系伤害"，
- * 既然是某系伤害，就要吃克制与抵抗 —— 这里把它算出来。
+ * 「状态造成的伤害」区块：把该侧已选状态里**会造成伤害**的那些列出来。
+ *   · 百分比类（灼烧/中毒/冻结/寄生/棘刺/引电/中毒印记）：按面板生命 × 百分比 × 元素克制
+ *   · 威力类（星陨印记）：显示威力 = 层数² − 24×层数 + 24，再走标准伤害公式，
+ *     物理/魔法跟随触发它的那个技能，系别固定为幻系（所以吃系别克制）
  */
-function statusDamageBlock(side, sp) {
-  const d = statusDamageOf(side, sp);
+function statusDamageBlock(side, sp, otherSp = null) {
+  // 触发这一侧状态的那次攻击：一定是**对面**打过来的
+  const atkSide = side === 'a' ? 'b' : 'a';
+  const attacker = otherSp ?? STATE.bySpirit.get(STATE.calc[atkSide]);
+  const atkSkillId = atkSide === 'a' ? STATE.calc.skillA : STATE.calc.skillB;
+  const skill = atkSkillId ? STATE.bySkill.get(atkSkillId) : null;
+  const d = statusDamageOf(side, sp, { attacker, skill });
   if (!d.rows.length) {
     return `<div class="st-dmg st-dmg-empty">
       <div class="st-dmg-head"><span>状态造成的伤害</span></div>
@@ -1489,7 +1499,13 @@ function statusDamageBlock(side, sp) {
         : r.eff === 2 ? '<span class="mx2">×2 克制</span>'
           : r.eff === 0.5 ? '<span class="mxh">×½ 抵抗</span>'
             : r.eff === 0.25 ? '<span class="mxh">×¼ 双抵抗</span>' : '<span class="desc">×1</span>';
-    return `<div class="st-dmg-row">
+    // 星陨这类"按威力走公式"的状态：显示威力曲线值 + 实际伤害 + 物理/魔法归属
+    const isPower = r.mode === 'power';
+    const detail = r.detail;
+    const atkTxt = isPower
+      ? (detail ? `${detail.isPhysical ? '物理' : '魔法'} ${detail.isPhysical ? '物攻' : '魔攻'}${detail.atkStat} vs ${detail.isPhysical ? '物防' : '魔防'}${detail.defStat}` : '需先选一个触发它的技能')
+      : '';
+    return `<div class="st-dmg-row${isPower ? ' st-dmg-power' : ''}">
       <div class="st-dmg-name">
         <b>${esc(r.name)}</b>
         <span class="desc">${r.element ? `${esc(r.element)} · ` : ''}${esc(r.when)}${r.immune && r.immune !== '—' ? ` · ${esc(r.immune)}免疫` : ''}</span>
@@ -1497,17 +1513,22 @@ function statusDamageBlock(side, sp) {
       ${r.per === 'stack' ? `<label class="st-dmg-in">层
         <input type="number" min="0" max="99" value="${curLayers}" data-st-layers="${side}:${r.key}" aria-label="${esc(r.name)}层数">
       </label>` : '<span class="desc st-dmg-once">一次性</span>'}
-      <label class="st-dmg-in">${r.per === 'stack' ? '每层' : '扣血'}
+      ${isPower
+        ? `<span class="st-dmg-in">显示威力 <b class="st-pow">${r.power}</b></span>`
+        : `<label class="st-dmg-in">${r.per === 'stack' ? '每层' : '扣血'}
         <input type="number" min="0" max="100" step="0.5" value="${pctVal}" data-st-pct="${side}:${r.key}" aria-label="${esc(r.name)}百分比">
         <span class="st-mod-u">%</span>
-      </label>
+      </label>`}
       <div class="st-dmg-out">
         ${effTxt}
-        <b>${r.raw}</b>
-        <span class="desc">${r.per === 'stack'
-          ? `${r.pct}% × ${r.layers} 层 = ${r.pctSum}% 生命`
-          : `${r.pct}% 生命`}</span>
+        <b>${isPower ? (r.raw > 0 ? r.raw : '—') : r.raw}</b>
+        <span class="desc">${isPower
+          ? `${r.layers} 层 → 威力 ${r.power}${detail ? `（${detail.shown} × ${detail.typeEff}）` : ''}`
+          : r.per === 'stack'
+            ? `${r.pct}% × ${r.layers} 层 = ${r.pctSum}% 生命`
+            : `${r.pct}% 生命`}</span>
       </div>
+      ${atkTxt ? `<div class="desc st-dmg-note">${esc(atkTxt)}</div>` : ''}
       ${r.note ? `<div class="desc st-dmg-note">${esc(r.note)}</div>` : ''}
     </div>`;
   }).join('');
@@ -1544,8 +1565,9 @@ function bindSpiritPickerItems() {
   }
 }
 
-/** 状态面板（伤害计算页） */
-function statusPanel(a, b) {  return `<section class="calc-status" aria-label="状态">
+/** 状态面板（伤害计算页）。两侧互相传入，因为星陨那段伤害要知道"对面用哪招触发" */
+function statusPanel(a, b) {
+  return `<section class="calc-status" aria-label="状态">
     <div class="calc-status-head">
       <h3>状态</h3>
       <div class="calc-status-actions">
@@ -1554,8 +1576,8 @@ function statusPanel(a, b) {  return `<section class="calc-status" aria-label="�
       </div>
     </div>
     <div class="calc-status-body">
-      ${sideStatusPanel('a', a)}
-      ${sideStatusPanel('b', b)}
+      ${sideStatusPanel('a', a, b)}
+      ${sideStatusPanel('b', b, a)}
     </div>
   </section>`;
 }
@@ -1658,12 +1680,53 @@ const STATUS_EFFECTS = {
   parasite: { element: null, pct: 6, per: 'once', when: '回合结束', immune: '草系精灵', note: '按最大生命的 6% 扣除，不受克制关系影响；这部分由寄生来源回复' },
   'conductive-charge': { element: '电系', pct: 25, per: 'once', when: '每攒满 2 层立即', immune: '电系精灵' },
   'thorn-mark': { element: null, pct: 6, per: 'once', when: '离场换人时', immune: '—' },
-  'starfall-mark': { element: '幻系', pct: 0, per: 'stack', when: '被非幻系技能攻击时', immune: '幻系精灵', note: '每层系数官方未给，pct 留 0 可自行填' },
+  /**
+   * 星陨印记不吃"百分比掉血"，而是给一段**额外伤害**：
+   *   显示威力 = 层数² − 24 × 层数 + 24
+   * 也就是 0~1 层几乎没威力（1 层只有 1），层数高了才猛涨（20 层 ≈ 224）。
+   * 这段伤害走标准伤害公式，系别是幻系、攻防属性跟随**触发的那个技能**是物理还是魔法，
+   * 所以照样吃系别克制；触发条件是"用非幻系技能攻击持有该印记的精灵"。
+   */
+  /**
+   * 星陨印记不吃"百分比掉血"，而是给一段**额外伤害**：
+   *   显示威力 = 层数² + 24 × 层数 − 24
+   * 这条曲线单调递增：0 层按 0 算、1 层 = 1、2 层 = 28、10 层 = 316、20 层 = 856。
+   * 这段伤害走标准伤害公式，系别固定幻系、攻防属性跟随**触发的那个技能**是物理还是魔法，
+   * 所以照样吃系别克制；触发条件是"用非幻系技能攻击持有该印记的精灵"。
+   * ⚠ powerOf 必须走 starfallPower（它夹了 0）—— 早先这里写裸公式，负值会漏出去。
+   */
+  'starfall-mark': {
+    element: '幻系',
+    powerOf: (layers) => starfallPower(layers),
+    per: 'stack', when: '被非幻系技能攻击时', immune: '幻系精灵',
+    note: '显示威力 = 层数² + 24 × 层数 − 24（负值按 0 算）；按幻系走标准伤害公式，物理/魔法跟随触发它的那个技能，吃系别克制',
+  },
 };
 
-/** 「会造成伤害的状态」在某个精灵身上能打出多少。
- *  有元素的按元素克制算；element 为 null 的（冻结/寄生/棘刺）**不受克制关系影响**。 */
-function statusDamageOf(side, sp) {
+/** 星陨印记的显示威力 = 层数² + 24 × 层数 − 24，负数夹到 0（0 层算 0、1 层算 1） */
+function starfallPower(layers) {
+  const n = Math.max(0, Number(layers) || 0);
+  return Math.max(0, n * n + 24 * n - 24);
+}
+
+/**
+ * 某一条状态伤害的计算模式：
+ *   'pct'   按最大生命的百分比掉血（灼烧/中毒/冻结/寄生/棘刺/引电/中毒印记）
+ *   'power' 按显示威力走标准伤害公式（星陨印记）
+ */
+function statusModeOf(key) {
+  return typeof STATUS_EFFECTS[key]?.powerOf === 'function' ? 'power' : 'pct';
+}
+
+/**
+ * 「会造成伤害的状态」在某个精灵身上能打出多少。
+ * 两种模式：
+ *   pct     有元素的按元素克制算；element 为 null 的（冻结/寄生/棘刺）不受克制
+ *   power   按显示威力走标准伤害公式（星陨印记）—— 需要知道"谁在用哪种技能触发它"
+ *
+ * opts.attacker / opts.skill：触发这一侧状态的那次攻击（用于星陨的攻防与克制）
+ */
+function statusDamageOf(side, sp, opts = {}) {
   const st = side === 'a' ? STATE.calc.statusA : STATE.calc.statusB;
   const pcts = side === 'a' ? STATE.calc.statusPctA : STATE.calc.statusPctB;
   const maxHp = hpMaxOf(side, sp);
@@ -1674,15 +1737,48 @@ function statusDamageOf(side, sp) {
     if (!meta) continue;
     const def = STATE.statusByKey.get(key);
     const layers = st.layers?.[key] ?? 1;
-    const pct = Number(pcts?.[key] ?? meta.pct) || 0;
     // element 为 null -> 不受克制；有元素才去查克制表
     const typeId = meta.element ? STATE.typeByName.get(meta.element)?.id : null;
     const eff = typeId != null ? typeEffect(typeId, sp.types ?? []) : 1;
+    const mode = statusModeOf(key);
+
+    if (mode === 'power') {
+      // 按威力走标准公式：需要触发它的攻击方与技能（决定物理/魔法、攻防面板）
+      const power = meta.powerOf(layers);
+      const atkSp = opts.attacker ?? null;
+      const sk = opts.skill ?? null;
+      let dmg = null;
+      if (atkSp && sk && power > 0) {
+        dmg = calcDamage(atkSp, sp, sk, {
+          level: STATE.calc.level,
+          atkIV: withCalcSide(side === 'a' ? 'b' : 'a', () => spiritCalcOf(atkSp).stats[sk.cat === '魔法' ? 'satk' : 'patk'].iv),
+          atkNature: withCalcSide(side === 'a' ? 'b' : 'a', () => spiritCalcOf(atkSp).stats[sk.cat === '魔法' ? 'satk' : 'patk'].nature),
+          defIV: withCalcSide(side, () => spiritCalcOf(sp).stats[sk.cat === '魔法' ? 'sdef' : 'pdef'].iv),
+          defNature: withCalcSide(side, () => spiritCalcOf(sp).stats[sk.cat === '魔法' ? 'sdef' : 'pdef'].nature),
+          power,
+          // 幻系是这段额外伤害的系别，本系加成按攻击方自己算
+          typeOverrideId: typeId,
+          flatAdd: STATE.calc.flatAdd, skillPct: STATE.calc.skillPct,
+          atkStage: STATE.calc.atkStage, defStage: STATE.calc.defStage,
+          powerMul: STATE.calc.powerMul, finalMul: STATE.calc.finalMul,
+          targetHp: curHp || maxHp,
+        });
+      }
+      rows.push({
+        key, name: def?.name ?? key, element: meta.element, layers,
+        mode, power, per: meta.per, when: meta.when, immune: meta.immune, note: meta.note,
+        eff, effective: true, pctSum: 0, raw: dmg ? dmg.dmg : 0, detail: dmg,
+      });
+      continue;
+    }
+
+    // 百分比掉血
+    const pct = Number(pcts?.[key] ?? meta.pct) || 0;
     const perTurnPct = meta.per === 'stack' ? pct * layers : pct;
     const raw = Math.floor((maxHp * perTurnPct) / 100 * eff);
     rows.push({
       key, name: def?.name ?? key, element: meta.element, layers,
-      pct, per: meta.per, when: meta.when, immune: meta.immune, note: meta.note,
+      mode: 'pct', pct, per: meta.per, when: meta.when, immune: meta.immune, note: meta.note,
       eff, effective: typeId != null, pctSum: perTurnPct, raw,
     });
   }
@@ -2815,7 +2911,7 @@ $('#themeBtn').addEventListener('click', () => {
       glossaryDetail, render, index, calcDamage, panelStat, levelCoef, typeEffect, usableSkillsOf,
       NATURES, natureByName, panelValue, panelInt, ivOf, defaultNat, stateIcon, withCalcSide, bindNatalBlock,
       loadoutDamage, skillLoadout, pushLoadout, statCards, topSkillsOf, fillLoadoutWithTop,
-      STATUS_EFFECTS, statusDamageOf, hpMaxOf, hpNowOf, targetHpOf, typeEffect,
+      STATUS_EFFECTS, statusDamageOf, statusModeOf, starfallPower, hpMaxOf, hpNowOf, targetHpOf, typeEffect,
       spiritCalcOf, calcStatsOf, natalBlock, bindNatalBlock, redrawNatalBlock, statBreakdown, natalBoxEl, defaultInvestSet,
     };
   } catch (err) {

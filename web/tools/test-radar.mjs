@@ -719,6 +719,74 @@ console.log('\n· 状态面板');
   ok(A2.calc.hpPctA === 100, '「重置」把血量回到 100%');
 }
 
+/* ---------------------------------------------------------- 星陨印记（按威力走标准公式） */
+console.log('\n· 星陨印记：显示威力 = 层数² + 24 × 层数 − 24');
+{
+  // 威力曲线：单调递增，0 层按 0 算
+  const curve = [[0, 0], [1, 1], [2, 28], [5, 121], [10, 316], [20, 856], [30, 1596]];
+  for (const [n, want] of curve) {
+    ok(api.starfallPower(n) === want, `${n} 层 -> 威力 ${want}（实际 ${api.starfallPower(n)}）`);
+  }
+  let mono = true;
+  for (let i = 1; i <= 60; i++) if (api.starfallPower(i) < api.starfallPower(i - 1)) mono = false;
+  ok(mono, '威力随层数单调递增');
+  ok(api.starfallPower(-3) === 0, '负数层数按 0 算');
+  ok(api.starfallPower(0) === 0, '0 层威力 0（公式值 -24 被夹掉）');
+  ok(api.statusModeOf('starfall-mark') === 'power', '星陨走 power 模式（不是百分比掉血）');
+  ok(api.statusModeOf('burn') === 'pct', '灼烧仍走百分比模式');
+
+  // 物理技能触发 vs 魔法技能触发：攻防面板不同，结果应不同
+  A2.calc.a = '20:1'; A2.calc.b = '43:1'; A2.calc.skillA = 7150060;
+  A2.calc.statusA = { picks: [], star: 0, layers: {} };
+  A2.calc.statusB = { picks: ['starfall-mark'], star: 5, layers: { 'starfall-mark': 5 } };
+  A2.calc.statusPctA = {}; A2.calc.statusPctB = {};
+  A2.calc.hpPctA = 100; A2.calc.hpPctB = 100;
+  A2.calc.modsA = { patkPct: 0, satkPct: 0, pdefPct: 0, sdefPct: 0, spdAdd: 0, powerPct: 0, powerAdd: 0, finalPct: 100 };
+  A2.calc.modsB = { ...A2.calc.modsA };
+  A2.view = 'calc';
+  ids.get('app').innerHTML = '';
+  api.render();
+
+  const spSA = A2.bySpirit.get('20:1');
+  const spSB = A2.bySpirit.get('43:1');
+  const phys = [...A2.data.skills].find((s) => s.cat === '物理' && (s.dmgMax ?? 0) > 0 && s.id !== 7150060);
+  const mag = [...A2.data.skills].find((s) => s.cat === '魔法' && (s.dmgMax ?? 0) > 0);
+  const rPhys = api.statusDamageOf('b', spSB, { attacker: spSA, skill: phys }).rows[0];
+  const rMag = api.statusDamageOf('b', spSB, { attacker: spSA, skill: mag }).rows[0];
+  ok(rPhys.mode === 'power' && rPhys.power === 121, `5 层显示威力 = 121（实际 ${rPhys.power}）`);
+  ok(rPhys.raw > 0 && rMag.raw > 0, `物理/魔法触发都算出伤害（${rPhys.raw} / ${rMag.raw}）`);
+  ok(rPhys.detail.isPhysical === true, '物理技能触发时用物攻/物防');
+  ok(rMag.detail.isPhysical === false, '魔法技能触发时用魔攻/魔防');
+  ok(rPhys.raw !== rMag.raw, `两种攻击类型结果不同（${rPhys.raw} vs ${rMag.raw}）`);
+  // 系别固定幻系：克制按幻系算，与触发技能的系别无关
+  {
+    const fx = A2.typeByName.get('幻系').id;
+    ok(rPhys.detail.typeEff === api.typeEffect(fx, spSB.types), `克制按幻系算（×${rPhys.detail.typeEff}）`);
+    ok(rPhys.detail.dmgTypeId === fx, '实际参与计算的系别是幻系（typeOverrideId 生效）');
+    // 换一个对幻系抗性不同的目标，伤害应随之变（证明克制确实在起作用）
+    const other = A2.data.spirits.find((s) => s.formId === 1 && api.typeEffect(fx, s.types) !== 1);
+    if (other) {
+      const rOther = api.statusDamageOf('b', other, { attacker: spSA, skill: phys }).rows[0];
+      ok(rOther.detail.typeEff === api.typeEffect(fx, other.types), `换目标后按幻系克制重算（×${rOther.detail.typeEff}）`);
+    }
+  }
+  // 页面显示
+  {
+    const box = [...ids.get('app')._el.querySelectorAll('.st-dmg')][1];
+    const t = box.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    ok(/显示威力/.test(t), '页面标出「显示威力」');
+    ok(/121/.test(t), '页面出现威力 121');
+    ok(/5 层/.test(t), '页面标出层数');
+    ok(/物理|魔法/.test(t), '页面标出物理/魔法归属');
+  }
+  // 还原
+  A2.calc.statusA = { picks: [], star: 0, layers: {} };
+  A2.calc.statusB = { picks: [], star: 0, layers: {} };
+  A2.calc.statusPctA = {}; A2.calc.statusPctB = {};
+  ids.get('app').innerHTML = '';
+  api.render();
+}
+
 /* ---------------------------------------------------------- 状态造成的伤害 */
 console.log('\n· 状态造成的伤害（含元素克制）');
 {
