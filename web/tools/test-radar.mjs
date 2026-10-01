@@ -814,13 +814,13 @@ console.log('\n· 星陨印记：显示威力 = 层数² + 24 × 层数 − 24')
 }
 
 /* ---------------------------------------------------------- 星陨斩杀线 */
-console.log('\n· 星陨斩杀线：这一招 + 几层星陨刚好一轮打死');
+console.log('\n· 斩杀线：这一招 + 几层星陨到线（含回合末掉血）');
 {
-  const setupK = (marked) => {
+  const setupK = (picks) => {
     A2.calc.a = '20:1'; A2.calc.b = '43:1'; A2.calc.skillA = 7150060;
     A2.calc.hpPctA = 100; A2.calc.hpPctB = 100;
     A2.calc.statusA = { picks: [], star: 0, layers: {} };
-    A2.calc.statusB = { picks: marked ? ['starfall-mark'] : [], star: 0, layers: {} };
+    A2.calc.statusB = { picks, star: 0, layers: {} };
     A2.calc.statusPctA = {}; A2.calc.statusPctB = {};
     A2.calc.modsA = { patkPct: 0, satkPct: 0, pdefPct: 0, sdefPct: 0, spdAdd: 0, powerPct: 0, powerAdd: 0, finalPct: 100 };
     A2.calc.modsB = { ...A2.calc.modsA };
@@ -832,16 +832,16 @@ console.log('\n· 星陨斩杀线：这一招 + 几层星陨刚好一轮打死')
   const spKB = () => A2.bySpirit.get('43:1');
   const physK = [...A2.data.skills].find((s) => s.cat === '物理' && (s.dmgMax ?? 0) > 0
     && s.typeId !== A2.typeByName.get('幻系').id);
+  const killCols = (sel) => ids.get('app')._el.querySelectorAll(sel);
 
-  // 对面没挂印记 -> 不适用
-  setupK(false);
-  ok(ids.get('app')._el.querySelectorAll('.lo-kill').length > 0, '两张表都有「星陨斩杀」列');
-  ok([...ids.get('app')._el.querySelectorAll('.lo-kill')].every((c) => /—/.test(c.innerHTML)),
-    '没挂星陨印记时整列显示「—」');
-  ok(api.starfallKillLayers(spKA(), spKB(), physK, {}) === null, '没挂印记时不适用（返回 null）');
+  // ① 什么都没挂 -> 整列不显示（用户要求：正常情况下不用显示）
+  setupK([]);
+  ok(killCols('.lo-kill').length === 0, '什么都没挂时不显示斩杀列');
+  ok(api.starfallKillLayers(spKA(), spKB(), physK, {}) === null, '无回合末伤害时函数返回 null');
 
-  // 挂上印记 -> 出层数，且必须是最小的那个
-  setupK(true);
+  // ② 只挂星陨印记 -> 出层数，且必须是最小的那个
+  setupK(['starfall-mark']);
+  ok(killCols('.lo-kill').length > 0, '挂星陨印记后出现斩杀列');
   {
     const n = api.starfallKillLayers(spKA(), spKB(), physK, {});
     const hp = api.targetHpOf('b', spKB());
@@ -852,14 +852,68 @@ console.log('\n· 星陨斩杀线：这一招 + 几层星陨刚好一轮打死')
     // 关键回归：必须是"最少"层数（早先估算偏大时会返回偏大的值）
     ok(at(n - 1) < hp, `${n - 1} 层 ${at(n - 1)} 不足以斩杀 —— 确认是最少层数`);
   }
-  // 幻系技能不触发
+  // ③ 只挂回合末掉血（灼烧，没星陨）-> 也显示该列，层数恒为 0（星陨帮不上忙）
+  setupK(['burn']);
+  ok(killCols('.lo-kill').length > 0, '只有回合末掉血时也显示斩杀列');
+  ok(api.starfallKillLayers(spKA(), spKB(), physK, {}) === 0 || api.starfallKillLayers(spKA(), spKB(), physK, {}) === null,
+    '没有星陨可补时只可能是 0（已到线）或 null（到不了）');
+  ok(Array.from(killCols('.lo-kill')).every((c) => /不需要|—/.test(c.innerHTML)),
+    '没有星陨时该列只会是「不需要」或「—」');
+  // ④ 非回合末的状态（棘刺印记）不该让这一列出现
+  setupK(['thorn-mark']);
+  ok(killCols('.lo-kill').length === 0, '只挂「离场换人时」结算的棘刺印记时不显示（它不是回合末）');
+  // ⑤ 回合末伤害会降低所需层数
+  //    注意是"最多层数"的那一招体现最明显：层数给得越足，灼烧那点固定伤害越容易补上
+  //    临界差（少一层就差几百伤害），所以这里扫一遍找确实能看出差异的技能。
   {
+    const skills = [...A2.data.skills].filter((s) => (s.dmgMax ?? 0) > 0 && s.cat !== '状态'
+      && s.typeId && s.typeId !== A2.typeByName.get('幻系').id);
+    const layerOf = (picks, s) => {
+      setupK(picks);
+      return api.starfallKillLayers(spKA(), spKB(), s, {});
+    };
+    let improved = null;
+    let maxOnly = -1;
+    for (const s of skills) {
+      const only = layerOf(['starfall-mark'], s);
+      if (only === null || only < 2) continue;
+      const withBurn = layerOf(['starfall-mark', 'burn'], s);
+      if (withBurn !== null && withBurn < only && only > maxOnly) {
+        maxOnly = only; improved = { s, only, withBurn };
+      }
+    }
+    ok(!!improved, `找得到"加上回合末掉血后所需层数变少"的技能${improved ? `（${improved.s.name}）` : ''}`);
+    if (improved) {
+      ok(improved.withBurn < improved.only,
+        `「${improved.s.name}」加上灼烧后层数下降（${improved.only} -> ${improved.withBurn} 层）`);
+    }
+    // 全局口径：任何一招加上回合末伤害后都不该需要更多层
+    let worse = null;
+    for (const s of skills.slice(0, 40)) {
+      const only = layerOf(['starfall-mark'], s);
+      const withBurn = layerOf(['starfall-mark', 'burn'], s);
+      if (only !== null && withBurn !== null && withBurn > only) { worse = s; break; }
+    }
+    ok(!worse, `没有任何一招会因为加了回合末掉血而需要更多层${worse ? `（反例：${worse.name}）` : ''}`);
+  }
+  // ⑥ 回合末伤害单独就能到线 -> 不需要星陨
+  {
+    setupK(['burn']);
+    A2.calc.hpPctB = 8;   // 对面残血，光靠灼烧就够
+    const n = api.starfallKillLayers(spKA(), spKB(), physK, {});
+    ok(n === 0 || n === null, `残血 + 灼烧时不会要求星陨层数（实际 ${n}）`);
+    A2.calc.hpPctB = 100;
+  }
+  // ⑦ 幻系技能不触发星陨
+  {
+    setupK(['starfall-mark']);
     const phId = A2.typeByName.get('幻系').id;
     const ph = [...A2.data.skills].find((s) => s.typeId === phId && (s.dmgMax ?? 0) > 0);
     if (ph) ok(api.starfallKillLayers(spKA(), spKB(), ph, {}) === null, `幻系技能「${ph.name}」不触发星陨`);
   }
-  // 本身打得死 -> 0 / 「不需要」
+  // ⑧ 本身打得死 -> 0 / 「不需要」
   {
+    setupK(['starfall-mark']);
     A2.calc.hpPctB = 5;
     ids.get('app').innerHTML = '';
     api.render();
@@ -867,25 +921,27 @@ console.log('\n· 星陨斩杀线：这一招 + 几层星陨刚好一轮打死')
     ok(/不需要/.test(ids.get('app')._el.innerHTML), '页面显示「不需要」');
     A2.calc.hpPctB = 100;
   }
-  // 两张表口径不同：含全局加成时所需层数不会更多
+  // ⑨ 两张表口径不同：含全局加成时所需层数不会更多
   {
+    setupK(['starfall-mark']);
     const bare = api.starfallKillLayers(spKA(), spKB(), physK, { sendGlobal: false });
     const glob = api.starfallKillLayers(spKA(), spKB(), physK, { sendGlobal: true });
     ok(glob <= bare, `含全局加成时所需层数不多于裸威力口径（${glob} ≤ ${bare}）`);
   }
-  // 页面真的渲染出列（两侧都要有技能 —— 自动填标记可能被前面的用例烧掉，这里显式填）
+  // ⑩ 页面真的渲染出列（两侧都要有技能 —— 自动填标记可能被前面的用例烧掉，这里显式填）
   {
+    setupK(['starfall-mark']);
     api.fillLoadoutWithTop('a', A2.bySpirit.get(A2.calc.a), A2.bySpirit.get(A2.calc.b), 4);
     api.fillLoadoutWithTop('b', A2.bySpirit.get(A2.calc.b), A2.bySpirit.get(A2.calc.a), 4);
     ids.get('app').innerHTML = '';
     api.render();
-    const lo = [...ids.get('app')._el.querySelectorAll('.lo-table .lo-kill')];
+    const lo = [...killCols('.lo-table .lo-kill')];
     ok(lo.length === 8, `两侧四技能槽各 4 行斩杀列（共 ${lo.length}）`);
     ok(lo.every((c) => /层|—|不需要/.test(c.innerHTML)), '四技能槽的斩杀格都有内容');
-    ok(ids.get('app')._el.querySelectorAll('.section .lo-kill').length > 0, '排序表也有斩杀列');
+    ok(killCols('.section .lo-kill').length > 0, '排序表也有斩杀列');
   }
   // 还原
-  setupK(false);
+  setupK([]);
 }
 
 /* ---------------------------------------------------------- 状态造成的伤害 */

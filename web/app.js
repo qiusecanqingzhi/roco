@@ -1291,6 +1291,8 @@ function loadoutDamage(side, sp, otherSp) {
   const targetHp = targetHpOf(otherSide, otherSp);
   const rows = [];
   let sum = 0;
+  // 斩杀线那一列只在需要时才算（每算一次要跑上百次伤害计算，没必要白跑）
+  const wantKill = STATE.calc.statusB.picks.includes('starfall-mark') || hasTurnEndDamage('b');
   load.forEach((sid, i) => {
     const sk = sid ? STATE.bySkill.get(sid) : null;
     if (!sk) { rows.push({ i, sk: null, pow: 0, hit: 1, dmg: 0, total: 0 }); return; }
@@ -1322,8 +1324,8 @@ function loadoutDamage(side, sp, otherSp) {
     }
     const total = dmg * hit;
     sum += total;
-    // 斩杀线：这一招配星陨几层能一轮打死对面（口径与上表一致，含全局加成）
-    const killN = pow > 0 ? starfallKillLayers(sp, otherSp, sk, { sendGlobal: true }) : null;
+    // 斩杀线：这一招配星陨几层能到斩杀线（口径与本表一致，含全局加成）
+    const killN = (wantKill && pow > 0) ? starfallKillLayers(sp, otherSp, sk, { sendGlobal: true }) : null;
     rows.push({ i, sk, pow, hit, dmg, total, killN });
   });
   return { rows, sum };
@@ -1594,6 +1596,10 @@ function statusPanel(a, b) {
  */
 function skillLoadout(side, sp, otherSp) {
   const { rows, sum } = loadoutDamage(side, sp, otherSp);
+  // 斩杀线只在"对面有回合末掉血"或"挂了星陨印记"时才有意义，平时不显示，免得占一整列
+  const marked = STATE.calc.statusB.picks.includes('starfall-mark');
+  const turnEnd = hasTurnEndDamage('b');
+  const showKill = marked || turnEnd;
 
   const body = rows.map(({ i, sk, pow, hit, dmg, total, killN }) => {
     if (!sk) {
@@ -1620,12 +1626,10 @@ function skillLoadout(side, sp, otherSp) {
              <span class="lo-pct">${pct.toFixed(1)}%</span>`
           : '<span class="desc">—</span>'}
       </td>
-      <td class="num lo-kill" title="这一招打完再触发这么多层星陨，正好能一轮打死对面（对面上要有星陨印记）">${killLayerCell(killN)}</td>
+      ${showKill ? `<td class="num lo-kill" title="这一招打完（有回合末掉血时再算上它）还要这么多层星陨才到斩杀线">${killLayerCell(killN)}</td>` : ''}
     </tr>`;
   }).join('');
 
-  // 对面没挂星陨印记时这一列全是「—」，给一句解释免得看着像坏了
-  const marked = STATE.calc.statusB.picks.includes('starfall-mark');
   return `<div class="calc-loadout" data-loadout="${side}">
     <div class="lo-head">
       <h3>四技能槽 <span class="n">${esc(sp.name)}</span></h3>
@@ -1635,15 +1639,15 @@ function skillLoadout(side, sp, otherSp) {
       <thead><tr>
         <th class="mid">#</th><th class="mid">图标</th><th>技能</th><th class="mid">属性</th>
         <th class="mid">耗能</th><th class="mid">威力</th><th class="mid">连击</th><th class="mid">移除</th>
-        <th class="num">总伤害 / 占比</th><th class="num">星陨斩杀</th>
+        <th class="num">总伤害 / 占比</th>${showKill ? '<th class="num">斩杀线</th>' : ''}
       </tr></thead>
       <tbody>${body}</tbody>
     </table></div>
-    <div class="desc" style="margin-top:6px;font-size:12px">
-      ${marked
-        ? '「星陨斩杀」= 这一招打完后再触发多少层星陨印记，刚好一轮打死对面当前血量（含技能自身伤害）；「不需要」表示不用星陨就打得死。'
-        : '「星陨斩杀」要在下面对手那侧勾上<b>星陨印记</b>并填好层数才会出数（幻系技能不触发星陨）。'}
-    </div>
+    ${showKill ? `<div class="desc" style="margin-top:6px;font-size:12px">
+      「斩杀线」= 这一招打完<b>再补多少层星陨</b>就能一轮打死对面。判据分两层：
+      这一招 + 星陨是立刻结算的，回合末的掉血（${turnEnd ? statusTurnEndNames() : '无'}）是之后再扣 ——
+      所以打完剩余的血量只要不超过回合末掉血，也算斩杀。${marked ? '' : '（对面没挂星陨印记，所以只看技能与回合末伤害）'}
+    </div>` : ''}
   </div>`;
 }
 
@@ -1682,30 +1686,26 @@ function targetHpOf(side, sp) {
  *   pct       伤害百分比（默认值取自词条描述，用户可改）
  *   per       按什么算：'stack' 百分比 × 层数；'once' 只看是否生效
  *   when      结算时机（只作展示）
+ *   turnEnd   true = 在**回合末**结算（这种能并进斩杀线，因为是攻击之后才扣）
  *   immune    谁免疫（照描述）
  */
 const STATUS_EFFECTS = {
-  burn: { element: '火系', pct: 2, per: 'stack', when: '回合结束', immune: '火系精灵' },
-  poison: { element: '毒系', pct: 3, per: 'stack', when: '回合结束', immune: '毒系精灵' },
-  'poison-mark': { element: '毒系', pct: 3, per: 'once', when: '回合结束', immune: '—' },
+  burn: { element: '火系', pct: 2, per: 'stack', when: '回合结束', turnEnd: true, immune: '火系精灵' },
+  poison: { element: '毒系', pct: 3, per: 'stack', when: '回合结束', turnEnd: true, immune: '毒系精灵' },
+  'poison-mark': { element: '毒系', pct: 3, per: 'once', when: '回合结束', turnEnd: true, immune: '—' },
   // 冻结与寄生按规则**不吃克制关系**（element: null）
-  freeze: { element: null, pct: 5, per: 'stack', when: '从左侧开始扣', immune: '冰系精灵', note: '按最大生命的比例从左侧扣除，不受克制关系影响；当前生命低于该比例时力竭' },
-  parasite: { element: null, pct: 6, per: 'once', when: '回合结束', immune: '草系精灵', note: '按最大生命的 6% 扣除，不受克制关系影响；这部分由寄生来源回复' },
+  freeze: { element: null, pct: 5, per: 'stack', when: '从左侧开始扣', turnEnd: true, immune: '冰系精灵', note: '按最大生命的比例从左侧扣除，不受克制关系影响；当前生命低于该比例时力竭' },
+  parasite: { element: null, pct: 6, per: 'once', when: '回合结束', turnEnd: true, immune: '草系精灵', note: '按最大生命的 6% 扣除，不受克制关系影响；这部分由寄生来源回复' },
+  // 引电是"攒满 2 层立即"，棘刺是"离场换人时" —— 都不是回合末，不并进斩杀线
   'conductive-charge': { element: '电系', pct: 25, per: 'once', when: '每攒满 2 层立即', immune: '电系精灵' },
   'thorn-mark': { element: null, pct: 6, per: 'once', when: '离场换人时', immune: '—' },
-  /**
-   * 星陨印记不吃"百分比掉血"，而是给一段**额外伤害**：
-   *   显示威力 = 层数² − 24 × 层数 + 24
-   * 也就是 0~1 层几乎没威力（1 层只有 1），层数高了才猛涨（20 层 ≈ 224）。
-   * 这段伤害走标准伤害公式，系别是幻系、攻防属性跟随**触发的那个技能**是物理还是魔法，
-   * 所以照样吃系别克制；触发条件是"用非幻系技能攻击持有该印记的精灵"。
-   */
   /**
    * 星陨印记不吃"百分比掉血"，而是给一段**额外伤害**：
    *   显示威力 = 层数² + 24 × 层数 − 24
    * 这条曲线单调递增：0 层按 0 算、1 层 = 1、2 层 = 28、10 层 = 316、20 层 = 856。
    * 这段伤害走标准伤害公式，系别固定幻系、攻防属性跟随**触发的那个技能**是物理还是魔法，
-   * 所以照样吃系别克制；触发条件是"用非幻系技能攻击持有该印记的精灵"。
+   * 所以照样吃系别克制；触发条件是"用非幻系技能攻击持有该印记的精灵"，
+   * 而且它是**被攻击时立刻**结算的（不是回合末），所以由斩杀线里的 at() 负责、不进 turnEnd。
    * ⚠ powerOf 必须走 starfallPower（它夹了 0）—— 早先这里写裸公式，负值会漏出去。
    */
   'starfall-mark': {
@@ -1729,46 +1729,6 @@ function layersForPower(power) {
   const disc = 576 - 4 * c;
   if (disc < 0) return 0;
   return Math.max(0, Math.ceil((-24 + Math.sqrt(disc)) / 2));
-}
-
-/**
- * 「这一招 + 星陨 N 层」要几层才能斩杀对面的当前血量。
- *
- * opts.sendGlobal = true  与四技能槽同口径（含全局的固定加威力 / 本次技能威力%）
- * opts.sendGlobal = false 与排序表同口径（裸威力，不含这两项）
- * —— 两张表基准不同，斩杀线也得各算各的，否则自相矛盾。
- *
- * 返回 null 表示不适用（对面没挂星陨印记 / 这一招是幻系不触发 / 没填层数）。
- * 返回 0 表示不用星陨就已经打得死。
- * 触发技能与星陨那段额外伤害**加在一起**看（同一轮打出去）：
- *   baseDmg + N 层星陨伤害 ≥ 目标当前血量
- */
-function starfallKillLayers(atkSp, defSp, sk, opts = {}) {
-  if (!atkSp || !defSp || !sk) return null;
-  // 只有"对面身上有星陨印记"时才谈得上触发
-  if (!STATE.calc.statusB.picks.includes('starfall-mark')) return null;
-  // 幻系技能不触发（描述原文：用**非幻系**技能攻击才触发）
-  const phantomId = STATE.typeByName.get('幻系')?.id;
-  if (phantomId == null) return null;
-  if (sk.typeId === phantomId || !sk.typeId) return null;
-
-  const targetHp = targetHpOf('b', defSp);
-  const baseDmg = damageWithPower(atkSp, defSp, sk, sk.dmgMax ?? 0, opts);
-  const at = (n) => baseDmg + damageWithPower(atkSp, defSp, sk, starfallPower(n), { ...opts, phantom: true });
-  if (at(0) >= targetHp) return 0;
-
-  // 先按公式估一个"够用"的层数。估算偏大是常态（威力是二次增长、还叠了取整），
-  // 所以拿到一个够用的 n 之后必须**往下收敛**，找到真正最小的层数。
-  // ⚠ 早先只从估算值往上扫，估算偏大时会返回偏大的层数（17 估出 13，实际 11）—— 已修。
-  let n = layersForPower(Math.ceil(Math.max(0, targetHp - baseDmg) * 2 + 24));
-  n = Math.max(0, Math.min(99, Math.round(n)));
-  if (at(n) >= targetHp) {
-    while (n > 0 && at(n - 1) >= targetHp) n--;
-    return n;
-  }
-  // 估算偏小就没得收敛了，老老实实往上找第一个够用的
-  while (n <= 99 && at(n) < targetHp) n++;
-  return n <= 99 ? n : null;
 }
 
 /**
@@ -1799,11 +1759,90 @@ function damageWithPower(atkSp, defSp, sk, power, o = {}) {
   }).dmg;
 }
 
-/** 斩杀线那一列的文案：不适用给「—」，本身就能打死给「不需要」 */
+/** 这一招能不能触发星陨印记（幻系技能不触发；描述原文：用非幻系技能攻击才触发） */
+function triggersStarfall(sk) {
+  const phantomId = STATE.typeByName.get('幻系')?.id;
+  if (phantomId == null || !sk) return false;
+  return !!sk.typeId && sk.typeId !== phantomId;
+}
+
+/**
+ * 某一侧身上有没有"回合末结算"的掉血状态。
+ * 这些是**在攻击之后**才扣的，所以可以并进斩杀线；
+ * 而"离场换人时"（棘刺印记）、"被攻击时"（星陨印记）这类不在此列 —— 它们不是回合末。
+ */
+function hasTurnEndDamage(side) {
+  const st = side === 'a' ? STATE.calc.statusA : STATE.calc.statusB;
+  return (st.picks ?? []).some((k) => STATUS_EFFECTS[k]?.turnEnd);
+}
+
+/** 回合末会掉血的状态名（只用于说明文案） */
+function statusTurnEndNames(side = 'b') {
+  const st = side === 'a' ? STATE.calc.statusA : STATE.calc.statusB;
+  return (st.picks ?? []).filter((k) => STATUS_EFFECTS[k]?.turnEnd)
+    .map((k) => STATE.statusByKey.get(k)?.name ?? k).join('、');
+}
+
+/**
+ * 斩杀线那一列的文案：
+ *   null -> 不适用
+ *   0    -> 已经到斩杀线（不用星陨）
+ * 其余  -> 还要这么多层星陨
+ */
 function killLayerCell(n) {
   if (n === null) return '<span class="desc">—</span>';
   if (n === 0) return '<span class="desc">不需要</span>';
   return `<b>${n}</b><span class="desc"> 层</span>`;
+}
+
+/**
+ * 要几层星陨才能让这一招到斩杀线。
+ *
+ * opts.sendGlobal = true  与四技能槽同口径（含全局的固定加威力 / 本次技能威力%）
+ * opts.sendGlobal = false 与排序表同口径（裸威力，不含这两项）
+ *
+ * 返回 null 表示不适用（这一招是幻系不触发星陨，或连回合末伤害都没有、压根到不了斩杀线）。
+ * 返回 0 表示不用星陨就已经到斩杀线。
+ *
+ * 判据要分开算，因为两段伤害的**发生时机不同**：
+ *   · 这一招 + 星陨那段是**立刻**打出去的 → 两者相加，把对面打到 0 或打残
+ *   · 回合末的掉血状态是**之后**才结算的 → 只要上一段打完还剩的血不超过它，就力竭
+ * 也就是：
+ *   剩余 = 当前血量 − (这一招 + N 层星陨)
+ *   到线 = 剩余 ≤ 0（直接打死）  或  剩余 ≤ 回合末掉血（交给回合末补刀）
+ * 把三者直接相加是错的 —— 那等于假设回合末伤害和技能同时结算。
+ *
+ * 对面没挂星陨印记时，只要回合末伤害够，也能"到线"，此时层数就是 0。
+ */
+function starfallKillLayers(atkSp, defSp, sk, opts = {}) {
+  if (!atkSp || !defSp || !sk) return null;
+  const canStarfall = STATE.calc.statusB.picks.includes('starfall-mark') && triggersStarfall(sk);
+
+  const targetHp = targetHpOf('b', defSp);
+  const baseDmg = damageWithPower(atkSp, defSp, sk, sk.dmgMax ?? 0, opts);
+  // 没有星陨时，层数恒为 0（at(0) 就是这一招本身）
+  const at = (n) => baseDmg + (canStarfall && n > 0
+    ? damageWithPower(atkSp, defSp, sk, starfallPower(n), { ...opts, phantom: true }) : 0);
+  // 回合末掉血（不含星陨那段 —— 它不是回合末，已由 at() 负责）
+  const turnEnd = statusDamageOf('b', defSp, { attacker: atkSp, skill: sk })
+    .rows.filter((r) => r.mode !== 'power').reduce((a, r) => a + r.raw, 0);
+  const remainAfter = (n) => Math.max(0, targetHp - at(n));
+  const lethal = (n) => remainAfter(n) <= 0 || remainAfter(n) <= turnEnd;
+  if (lethal(0)) return 0;
+  // 没挂印记（或这招不触发）时，星陨帮不上忙
+  if (!canStarfall) return null;
+
+  // 先按公式估一个够用的层数。估算偏大是常态（威力二次增长 + 取整），
+  // 所以拿到够用的 n 之后必须**往下收敛**找最小。
+  // ⚠ 早先只从估算值往上扫，估算偏大时会返回偏大的层数（估 17、实际 11、却返回 13）—— 已修。
+  const needDmg = Math.max(0, targetHp - turnEnd - baseDmg);
+  let n = Math.max(0, Math.min(99, Math.round(layersForPower(Math.ceil(needDmg * 2 + 24)))));
+  if (lethal(n)) {
+    while (n > 0 && lethal(n - 1)) n--;
+    return n;
+  }
+  while (n <= 99 && !lethal(n)) n++;
+  return n <= 99 ? n : null;
 }
 
 /**
@@ -2033,12 +2072,15 @@ function viewCalc() {
   let rankBlock = '';
   if (c.sortByDamage) {
     const list = topSkillsOf('a', a, b, 12);
+    // 斩杀线只在"对面有回合末掉血"或"挂了星陨印记"时才有意义，平时不占这一列
     const markedRank = STATE.calc.statusB.picks.includes('starfall-mark');
+    const turnEndRank = hasTurnEndDamage('b');
+    const showKillRank = markedRank || turnEndRank;
     rankBlock = `<div class="section"><h3>${esc(a.name)} 打 ${esc(b.name)}：伤害最高的技能 <span class="n">前 ${list.length}</span></h3>
       <div class="table-wrap"><table>
         <thead><tr><th class="mid">图标</th><th>技能</th><th class="num">威力</th><th class="mid">系别</th>
           <th class="num">显示威力</th><th class="num">预计伤害</th><th class="num">需要几下</th>
-          <th class="num">星陨斩杀</th></tr></thead>
+          ${showKillRank ? '<th class="num">斩杀线</th>' : ''}</tr></thead>
         <tbody>${list.map(({ s, r }) => `
           <tr class="clickable" data-calc-pick="${s.id}">
             <td class="mid">${skillIconTag(s.id)}</td>
@@ -2048,14 +2090,14 @@ function viewCalc() {
             <td class="num">${r.shown}</td>
             <td class="num"><b>${r.dmg}</b></td>
             <td class="num">${r.dmg > 0 ? r.hits : '—'}</td>
-            <td class="num lo-kill" title="这一招打完再触发这么多层星陨，正好能一轮打死对面">${killLayerCell(starfallKillLayers(a, b, s, { sendGlobal: false }))}</td>
+            ${showKillRank ? `<td class="num lo-kill" title="这一招打完（有回合末掉血时再算上它）还要这么多层星陨才到斩杀线">${killLayerCell(starfallKillLayers(a, b, s, { sendGlobal: false }))}</td>` : ''}
           </tr>`).join('')}</tbody>
       </table></div>
-      <div class="desc" style="margin-top:6px;font-size:12px">
-        ${markedRank
-          ? '「星陨斩杀」= 这一招 + 这么多层星陨，刚好一轮打死对面当前血量。本表用<b>裸威力</b>口径（不含固定加威力与本次技能威力%），所以和上方四技能槽那列可能不同。'
-          : '「星陨斩杀」要在下面对方那侧勾上<b>星陨印记</b>并填好层数才会出数（幻系技能不触发星陨）。'}
-      </div></div>`;
+      ${showKillRank ? `<div class="desc" style="margin-top:6px;font-size:12px">
+        「斩杀线」= 这一招打完<b>再补多少层星陨</b>到斩杀线。本表用<b>裸威力</b>口径（不含固定加威力与本次技能威力%），
+        所以和上方四技能槽那列可能不同。回合末掉血（${turnEndRank ? statusTurnEndNames() : '无'}）是攻击之后才结算的，
+        所以打完剩余血量只要不超过它也算到线。${markedRank ? '' : '（对面没挂星陨印记，所以只看技能与回合末伤害）'}
+      </div>` : ''}</div>`;
   }
 
   return `
