@@ -1322,7 +1322,9 @@ function loadoutDamage(side, sp, otherSp) {
     }
     const total = dmg * hit;
     sum += total;
-    rows.push({ i, sk, pow, hit, dmg, total });
+    // 斩杀线：这一招配星陨几层能一轮打死对面（口径与上表一致，含全局加成）
+    const killN = pow > 0 ? starfallKillLayers(sp, otherSp, sk, { sendGlobal: true }) : null;
+    rows.push({ i, sk, pow, hit, dmg, total, killN });
   });
   return { rows, sum };
 }
@@ -1593,10 +1595,10 @@ function statusPanel(a, b) {
 function skillLoadout(side, sp, otherSp) {
   const { rows, sum } = loadoutDamage(side, sp, otherSp);
 
-  const body = rows.map(({ i, sk, pow, hit, dmg, total }) => {
+  const body = rows.map(({ i, sk, pow, hit, dmg, total, killN }) => {
     if (!sk) {
       return `<tr class="lo-empty"><td class="mid">${i + 1}</td>
-        <td colspan="9" class="desc">空位 —— 点下面「伤害最高的技能」里的一行放进来</td></tr>`;
+        <td colspan="10" class="desc">空位 —— 点下面「伤害最高的技能」里的一行放进来</td></tr>`;
     }
     const pct = sum > 0 ? (total / sum) * 100 : 0;
     return `<tr data-lo-row="${side}:${i}">
@@ -1618,9 +1620,12 @@ function skillLoadout(side, sp, otherSp) {
              <span class="lo-pct">${pct.toFixed(1)}%</span>`
           : '<span class="desc">—</span>'}
       </td>
+      <td class="num lo-kill" title="这一招打完再触发这么多层星陨，正好能一轮打死对面（对面上要有星陨印记）">${killLayerCell(killN)}</td>
     </tr>`;
   }).join('');
 
+  // 对面没挂星陨印记时这一列全是「—」，给一句解释免得看着像坏了
+  const marked = STATE.calc.statusB.picks.includes('starfall-mark');
   return `<div class="calc-loadout" data-loadout="${side}">
     <div class="lo-head">
       <h3>四技能槽 <span class="n">${esc(sp.name)}</span></h3>
@@ -1630,10 +1635,15 @@ function skillLoadout(side, sp, otherSp) {
       <thead><tr>
         <th class="mid">#</th><th class="mid">图标</th><th>技能</th><th class="mid">属性</th>
         <th class="mid">耗能</th><th class="mid">威力</th><th class="mid">连击</th><th class="mid">移除</th>
-        <th class="num">总伤害 / 占比</th>
+        <th class="num">总伤害 / 占比</th><th class="num">星陨斩杀</th>
       </tr></thead>
       <tbody>${body}</tbody>
     </table></div>
+    <div class="desc" style="margin-top:6px;font-size:12px">
+      ${marked
+        ? '「星陨斩杀」= 这一招打完后再触发多少层星陨印记，刚好一轮打死对面当前血量（含技能自身伤害）；「不需要」表示不用星陨就打得死。'
+        : '「星陨斩杀」要在下面对手那侧勾上<b>星陨印记</b>并填好层数才会出数（幻系技能不触发星陨）。'}
+    </div>
   </div>`;
 }
 
@@ -1710,6 +1720,90 @@ const STATUS_EFFECTS = {
 function starfallPower(layers) {
   const n = Math.max(0, Number(layers) || 0);
   return Math.max(0, n * n + 24 * n - 24);
+}
+
+/** 星陨威力公式的反解：给一个需要的威力，估出大概要几层 */
+function layersForPower(power) {
+  if (!(power > 0)) return 0;
+  const c = 24 - power;               // n² + 24n + (24 − power) = 0
+  const disc = 576 - 4 * c;
+  if (disc < 0) return 0;
+  return Math.max(0, Math.ceil((-24 + Math.sqrt(disc)) / 2));
+}
+
+/**
+ * 「这一招 + 星陨 N 层」要几层才能斩杀对面的当前血量。
+ *
+ * opts.sendGlobal = true  与四技能槽同口径（含全局的固定加威力 / 本次技能威力%）
+ * opts.sendGlobal = false 与排序表同口径（裸威力，不含这两项）
+ * —— 两张表基准不同，斩杀线也得各算各的，否则自相矛盾。
+ *
+ * 返回 null 表示不适用（对面没挂星陨印记 / 这一招是幻系不触发 / 没填层数）。
+ * 返回 0 表示不用星陨就已经打得死。
+ * 触发技能与星陨那段额外伤害**加在一起**看（同一轮打出去）：
+ *   baseDmg + N 层星陨伤害 ≥ 目标当前血量
+ */
+function starfallKillLayers(atkSp, defSp, sk, opts = {}) {
+  if (!atkSp || !defSp || !sk) return null;
+  // 只有"对面身上有星陨印记"时才谈得上触发
+  if (!STATE.calc.statusB.picks.includes('starfall-mark')) return null;
+  // 幻系技能不触发（描述原文：用**非幻系**技能攻击才触发）
+  const phantomId = STATE.typeByName.get('幻系')?.id;
+  if (phantomId == null) return null;
+  if (sk.typeId === phantomId || !sk.typeId) return null;
+
+  const targetHp = targetHpOf('b', defSp);
+  const baseDmg = damageWithPower(atkSp, defSp, sk, sk.dmgMax ?? 0, opts);
+  const at = (n) => baseDmg + damageWithPower(atkSp, defSp, sk, starfallPower(n), { ...opts, phantom: true });
+  if (at(0) >= targetHp) return 0;
+
+  // 先按公式估一个"够用"的层数。估算偏大是常态（威力是二次增长、还叠了取整），
+  // 所以拿到一个够用的 n 之后必须**往下收敛**，找到真正最小的层数。
+  // ⚠ 早先只从估算值往上扫，估算偏大时会返回偏大的层数（17 估出 13，实际 11）—— 已修。
+  let n = layersForPower(Math.ceil(Math.max(0, targetHp - baseDmg) * 2 + 24));
+  n = Math.max(0, Math.min(99, Math.round(n)));
+  if (at(n) >= targetHp) {
+    while (n > 0 && at(n - 1) >= targetHp) n--;
+    return n;
+  }
+  // 估算偏小就没得收敛了，老老实实往上找第一个够用的
+  while (n <= 99 && at(n) < targetHp) n++;
+  return n <= 99 ? n : null;
+}
+
+/**
+ * 某个技能在给定"基础威力"下的实际伤害。
+ * 供斩杀线复用与主计算完全同一套参数（等级 / 个体 / 性格 / 乘区 / 状态因子）。
+ */
+function damageWithPower(atkSp, defSp, sk, power, o = {}) {
+  const c = STATE.calc;
+  const isPhysical = (sk.cat ?? '') === '物理';
+  const atkKey = isPhysical ? 'patk' : 'satk';
+  const defKey = isPhysical ? 'pdef' : 'sdef';
+  const phantomId = STATE.typeByName.get('幻系')?.id;
+  return calcDamage(atkSp, defSp, sk, {
+    level: c.level,
+    atkIV: withCalcSide('a', () => spiritCalcOf(atkSp).stats[atkKey].iv),
+    atkNature: withCalcSide('a', () => spiritCalcOf(atkSp).stats[atkKey].nature),
+    defIV: withCalcSide('b', () => spiritCalcOf(defSp).stats[defKey].iv),
+    defNature: withCalcSide('b', () => spiritCalcOf(defSp).stats[defKey].nature),
+    power,
+    flatAdd: o.sendGlobal ? c.flatAdd : 0,
+    skillPct: o.sendGlobal ? c.skillPct : 0,
+    atkStage: c.atkStage, defStage: c.defStage,
+    powerMul: c.powerMul, finalMul: c.finalMul,
+    targetHp: targetHpOf('b', defSp),
+    mods: c.modsA, defMods: c.modsB,
+    // 星陨那段是幻系（与触发它的技能系别无关），所以覆盖参与计算的系别
+    ...(o.phantom && phantomId != null ? { typeOverrideId: phantomId } : {}),
+  }).dmg;
+}
+
+/** 斩杀线那一列的文案：不适用给「—」，本身就能打死给「不需要」 */
+function killLayerCell(n) {
+  if (n === null) return '<span class="desc">—</span>';
+  if (n === 0) return '<span class="desc">不需要</span>';
+  return `<b>${n}</b><span class="desc"> 层</span>`;
 }
 
 /**
@@ -1939,10 +2033,12 @@ function viewCalc() {
   let rankBlock = '';
   if (c.sortByDamage) {
     const list = topSkillsOf('a', a, b, 12);
+    const markedRank = STATE.calc.statusB.picks.includes('starfall-mark');
     rankBlock = `<div class="section"><h3>${esc(a.name)} 打 ${esc(b.name)}：伤害最高的技能 <span class="n">前 ${list.length}</span></h3>
       <div class="table-wrap"><table>
         <thead><tr><th class="mid">图标</th><th>技能</th><th class="num">威力</th><th class="mid">系别</th>
-          <th class="num">显示威力</th><th class="num">预计伤害</th><th class="num">需要几下</th></tr></thead>
+          <th class="num">显示威力</th><th class="num">预计伤害</th><th class="num">需要几下</th>
+          <th class="num">星陨斩杀</th></tr></thead>
         <tbody>${list.map(({ s, r }) => `
           <tr class="clickable" data-calc-pick="${s.id}">
             <td class="mid">${skillIconTag(s.id)}</td>
@@ -1952,8 +2048,14 @@ function viewCalc() {
             <td class="num">${r.shown}</td>
             <td class="num"><b>${r.dmg}</b></td>
             <td class="num">${r.dmg > 0 ? r.hits : '—'}</td>
+            <td class="num lo-kill" title="这一招打完再触发这么多层星陨，正好能一轮打死对面">${killLayerCell(starfallKillLayers(a, b, s, { sendGlobal: false }))}</td>
           </tr>`).join('')}</tbody>
-      </table></div></div>`;
+      </table></div>
+      <div class="desc" style="margin-top:6px;font-size:12px">
+        ${markedRank
+          ? '「星陨斩杀」= 这一招 + 这么多层星陨，刚好一轮打死对面当前血量。本表用<b>裸威力</b>口径（不含固定加威力与本次技能威力%），所以和上方四技能槽那列可能不同。'
+          : '「星陨斩杀」要在下面对方那侧勾上<b>星陨印记</b>并填好层数才会出数（幻系技能不触发星陨）。'}
+      </div></div>`;
   }
 
   return `
@@ -2922,7 +3024,7 @@ $('#themeBtn').addEventListener('click', () => {
       glossaryDetail, render, index, calcDamage, panelStat, levelCoef, typeEffect, usableSkillsOf,
       NATURES, natureByName, panelValue, panelInt, ivOf, defaultNat, stateIcon, withCalcSide, bindNatalBlock,
       loadoutDamage, skillLoadout, pushLoadout, statCards, topSkillsOf, fillLoadoutWithTop,
-      STATUS_EFFECTS, statusDamageOf, statusModeOf, starfallPower, hpMaxOf, hpNowOf, targetHpOf, typeEffect,
+      STATUS_EFFECTS, statusDamageOf, statusModeOf, starfallPower, starfallKillLayers, damageWithPower, layersForPower, killLayerCell, hpMaxOf, hpNowOf, targetHpOf, typeEffect,
       spiritCalcOf, calcStatsOf, natalBlock, bindNatalBlock, redrawNatalBlock, statBreakdown, natalBoxEl, defaultInvestSet,
     };
   } catch (err) {

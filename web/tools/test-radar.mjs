@@ -813,6 +813,81 @@ console.log('\n· 星陨印记：显示威力 = 层数² + 24 × 层数 − 24')
   api.render();
 }
 
+/* ---------------------------------------------------------- 星陨斩杀线 */
+console.log('\n· 星陨斩杀线：这一招 + 几层星陨刚好一轮打死');
+{
+  const setupK = (marked) => {
+    A2.calc.a = '20:1'; A2.calc.b = '43:1'; A2.calc.skillA = 7150060;
+    A2.calc.hpPctA = 100; A2.calc.hpPctB = 100;
+    A2.calc.statusA = { picks: [], star: 0, layers: {} };
+    A2.calc.statusB = { picks: marked ? ['starfall-mark'] : [], star: 0, layers: {} };
+    A2.calc.statusPctA = {}; A2.calc.statusPctB = {};
+    A2.calc.modsA = { patkPct: 0, satkPct: 0, pdefPct: 0, sdefPct: 0, spdAdd: 0, powerPct: 0, powerAdd: 0, finalPct: 100 };
+    A2.calc.modsB = { ...A2.calc.modsA };
+    A2.view = 'calc';
+    ids.get('app').innerHTML = '';
+    api.render();
+  };
+  const spKA = () => A2.bySpirit.get('20:1');
+  const spKB = () => A2.bySpirit.get('43:1');
+  const physK = [...A2.data.skills].find((s) => s.cat === '物理' && (s.dmgMax ?? 0) > 0
+    && s.typeId !== A2.typeByName.get('幻系').id);
+
+  // 对面没挂印记 -> 不适用
+  setupK(false);
+  ok(ids.get('app')._el.querySelectorAll('.lo-kill').length > 0, '两张表都有「星陨斩杀」列');
+  ok([...ids.get('app')._el.querySelectorAll('.lo-kill')].every((c) => /—/.test(c.innerHTML)),
+    '没挂星陨印记时整列显示「—」');
+  ok(api.starfallKillLayers(spKA(), spKB(), physK, {}) === null, '没挂印记时不适用（返回 null）');
+
+  // 挂上印记 -> 出层数，且必须是最小的那个
+  setupK(true);
+  {
+    const n = api.starfallKillLayers(spKA(), spKB(), physK, {});
+    const hp = api.targetHpOf('b', spKB());
+    const at = (layers) => api.damageWithPower(spKA(), spKB(), physK, physK.dmgMax, {})
+      + api.damageWithPower(spKA(), spKB(), physK, api.starfallPower(layers), { phantom: true });
+    ok(n > 0, `「${physK.name}」需要 ${n} 层`);
+    ok(at(n) >= hp, `${n} 层总伤害 ${at(n)} ≥ 目标 ${hp}`);
+    // 关键回归：必须是"最少"层数（早先估算偏大时会返回偏大的值）
+    ok(at(n - 1) < hp, `${n - 1} 层 ${at(n - 1)} 不足以斩杀 —— 确认是最少层数`);
+  }
+  // 幻系技能不触发
+  {
+    const phId = A2.typeByName.get('幻系').id;
+    const ph = [...A2.data.skills].find((s) => s.typeId === phId && (s.dmgMax ?? 0) > 0);
+    if (ph) ok(api.starfallKillLayers(spKA(), spKB(), ph, {}) === null, `幻系技能「${ph.name}」不触发星陨`);
+  }
+  // 本身打得死 -> 0 / 「不需要」
+  {
+    A2.calc.hpPctB = 5;
+    ids.get('app').innerHTML = '';
+    api.render();
+    ok(api.starfallKillLayers(spKA(), spKB(), physK, {}) === 0, '对面残血时返回 0');
+    ok(/不需要/.test(ids.get('app')._el.innerHTML), '页面显示「不需要」');
+    A2.calc.hpPctB = 100;
+  }
+  // 两张表口径不同：含全局加成时所需层数不会更多
+  {
+    const bare = api.starfallKillLayers(spKA(), spKB(), physK, { sendGlobal: false });
+    const glob = api.starfallKillLayers(spKA(), spKB(), physK, { sendGlobal: true });
+    ok(glob <= bare, `含全局加成时所需层数不多于裸威力口径（${glob} ≤ ${bare}）`);
+  }
+  // 页面真的渲染出列（两侧都要有技能 —— 自动填标记可能被前面的用例烧掉，这里显式填）
+  {
+    api.fillLoadoutWithTop('a', A2.bySpirit.get(A2.calc.a), A2.bySpirit.get(A2.calc.b), 4);
+    api.fillLoadoutWithTop('b', A2.bySpirit.get(A2.calc.b), A2.bySpirit.get(A2.calc.a), 4);
+    ids.get('app').innerHTML = '';
+    api.render();
+    const lo = [...ids.get('app')._el.querySelectorAll('.lo-table .lo-kill')];
+    ok(lo.length === 8, `两侧四技能槽各 4 行斩杀列（共 ${lo.length}）`);
+    ok(lo.every((c) => /层|—|不需要/.test(c.innerHTML)), '四技能槽的斩杀格都有内容');
+    ok(ids.get('app')._el.querySelectorAll('.section .lo-kill').length > 0, '排序表也有斩杀列');
+  }
+  // 还原
+  setupK(false);
+}
+
 /* ---------------------------------------------------------- 状态造成的伤害 */
 console.log('\n· 状态造成的伤害（含元素克制）');
 {

@@ -711,6 +711,11 @@ table.lo-table .lo-pct { font-size: 11px; color: var(--text-dim); font-variant-n
 .st-dmg-out .desc { font-size: 10px; }
 .st-dmg-note { grid-column: 1 / -1; font-size: 11px; }
 
+/* 星陨斩杀列：数字要一眼看到，但别抢过伤害那一列 */
+.lo-kill { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.lo-kill b { font-size: 14px; color: var(--accent); }
+.lo-kill .desc { font-size: 11px; }
+
 /* ------------------------------------------------------ 术语 */
 .glossary { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
 .gitem { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
