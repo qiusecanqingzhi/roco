@@ -390,7 +390,7 @@ ok(/的技能/.test(calcHtml), '有「XX 的技能」表');
 ok((calcHtml.match(/class="calc-skill-table"/g) || []).length === 2, '两侧各一张伤害技能表');
 const rankRows = (calcHtml.match(/data-calc-pick="/g) || []).length;
 ok(rankRows > 12, `技能表共 ${rankRows} 行（比原来的前 12 个多）`);
-// 每张表内部必须按伤害降序
+// 每张表内部必须按伤害降序（现在是卡片，伤害在 .sk-dmg 里）
 {
   // 用 data-skill-table="a|b" 切分（属性顺序是 data-* 在前，别按 class 找）
   const parts = calcHtml.split(/<div data-skill-table="/).slice(1);
@@ -398,7 +398,7 @@ ok(rankRows > 12, `技能表共 ${rankRows} 行（比原来的前 12 个多）`)
   for (const [i, tb] of parts.entries()) {
     // 只看下一张表之前的这一段，避免跨表
     const slice = tb.split('<div data-skill-table="')[0];
-    const dmg = [...slice.matchAll(/data-calc-pick="\d+"[\s\S]*?<td class="num"><b>(\d+)<\/b>/g)].map((m) => Number(m[1]));
+    const dmg = [...slice.matchAll(/data-calc-pick="\d+"[\s\S]*?<span class="desc">预计伤害<\/span>\s*<b>(\d+)<\/b>/g)].map((m) => Number(m[1]));
     ok(dmg.length > 1 && dmg.every((v, j) => j === 0 || dmg[j - 1] >= v),
       `第 ${i + 1} 张表按伤害降序（${dmg.slice(0, 5).join(' ≥ ')} …）`);
   }
@@ -419,11 +419,11 @@ ok(rankRows > 12, `技能表共 ${rankRows} 行（比原来的前 12 个多）`)
     const noPower = usable.filter((s) => !((s.dmgMax ?? 0) > 0 && s.cat !== '状态'));
     const missing = noPower.filter((s) => !slice.includes(`data-calc-pick="${s.id}"`));
     ok(missing.length === 0, `${sp.name} 的 ${noPower.length} 个无威力技能都在表里（缺 ${missing.length}）`);
-    ok((slice.match(/class="clickable[^"]*no-power"/g) || []).length === noPower.length,
+    ok((slice.match(/sk-card[^"]*no-power/g) || []).length === noPower.length,
       `无威力技能都带 no-power 标记（${noPower.length} 个）`);
-    ok(!/<details/.test(slice), '不再用折叠区，全部平铺在主表里');
-    ok(/没有威力|无威力/.test(slice), '有说明写清哪些是没有威力的技能');
-    if (noPower.length) ok(/class="cst-sep"/.test(slice), '两段之间有分隔行');
+    ok(!/<details/.test(slice), '没有折叠区，全部平铺');
+    ok(/没有威力/.test(slice), '有说明写清哪些是没有威力的技能');
+    if (noPower.length) ok(/class="sk-sep"/.test(slice), '两段之间有分隔行');
   }
 }
 
@@ -439,9 +439,12 @@ ok(/血脉/.test(calcHtml), '表头说明里提到血脉');
   const missing = blSkills.filter((id) => !tblA.includes(`data-calc-pick="${id}"`));
   ok(blSkills.length > 0, `岚鸟有 ${blSkills.length} 个血脉技能`);
   ok(missing.length === 0, `这些血脉技能都在表里（缺 ${missing.length} 个）`);
-  // 且都带血脉标签（逐行切分来判断，跨行正则容易写坏）
-  const rowsOf = (chunk) => chunk.split('<tr ').slice(1);
-  const rowOfSkill = (chunk, id) => rowsOf(chunk).find((r) => r.includes(`data-calc-pick="${id}"`)) ?? '';
+  // 且都带血脉标签。
+  // ⚠ 属性顺序在真实浏览器里按 HTML 原样（class 在前），但 dom-stub 会重排成
+  //   id/class 在前、data-* 在后 —— 所以**别按 class= 或 data-*= 当切分点**，
+  //   改成按 data-calc-pick 切：每个技能在一张表里只出现一次，切点无歧义。
+  const rowsOf = (chunk) => chunk.split('data-calc-pick="').slice(1);
+  const rowOfSkill = (chunk, id) => rowsOf(chunk).find((r) => r.startsWith(`${id}"`)) ?? '';
   const tagged = blSkills.filter((id) => rowOfSkill(tblA, id).includes('tag blood'));
   ok(tagged.length === blSkills.length, `血脉技能都带「血脉」标签（${tagged.length}/${blSkills.length}）`);
   // 非血脉技能不该被误标
@@ -875,7 +878,13 @@ console.log('\n· 星陨印记：显示威力 = 层数² + 24 × 层数 − 24')
 console.log('\n· 技能特殊效果（数值型，进威力计算）');
 {
   const byName = (n) => A2.data.skills.find((s) => s.name === n);
-  const setFx = (o) => { A2.calc.fx = { ...o }; };
+  // 效果默认**不生效**（用户要求：不加开关就按初始面板技能），
+  // 所以这里的 setFx 统一把 `on:<id>` 打开，再带上具体状态。
+  const setFx = (o, ...onIds) => {
+    const next = { ...o };
+    for (const id of onIds) next[`on:${id}`] = 1;
+    A2.calc.fx = next;
+  };
   const pw = (name, side = 'a') => {
     const sp = A2.bySpirit.get(side === 'a' ? '20:1' : '43:1');
     const o = A2.bySpirit.get(side === 'a' ? '43:1' : '20:1');
@@ -884,7 +893,7 @@ console.log('\n· 技能特殊效果（数值型，进威力计算）');
 
   // 表本身
   const n = Object.keys(api.SKILL_EFFECTS ?? {}).length;
-  ok(n >= 35, `效果表有 ${n} 条`);
+  ok(n >= 40, `效果表有 ${n} 条`);
   {
     let miss = 0; let noLabel = 0;
     for (const id of Object.keys(api.SKILL_EFFECTS ?? {})) {
@@ -895,32 +904,48 @@ console.log('\n· 技能特殊效果（数值型，进威力计算）');
     }
     ok(miss === 0, `每条都能对应到技能（缺 ${miss}）`);
     ok(noLabel === 0, `每条都能拿到说明文案（缺 ${noLabel}）`);
+    // 有开关语义：条件式要开关，纯数值类（按能耗 / 敌方总能耗 / 两侧威力）不需要
+    ok(api.effectHasSwitch(api.skillEffectOf(byName('见招拆招'))) === true, '条件式效果需要开关');
+    ok(api.effectHasSwitch(api.skillEffectOf(byName('逆袭'))) === false, '按能耗的效果不需要开关');
+  }
+  // 二选一
+  {
+    const fx = api.skillEffectOf(byName('驱赶'));
+    ok(api.effectIsChoice(fx), '驱赶识别为二选一');
+    ok(api.effectChoices(fx).length === 2, `两个分支：${api.effectChoices(fx).map((o) => o.label).join(' / ')}`);
   }
 
-  // 永久叠加
+  // 默认不生效：按初始面板威力
   {
     const s = byName('迫近攻击');
     setFx({});
+    ok(pw('迫近攻击').on === false, '效果默认不生效');
+    ok(pw('迫近攻击').power === s.dmgMax, `不生效时 = 初始面板 ${s.dmgMax}`);
+  }
+  // 永久叠加
+  {
+    const s = byName('迫近攻击');
+    setFx({ [s.id]: 0 }, s.id);
     ok(pw('迫近攻击').power === s.dmgMax, `0 层 = 基础威力 ${s.dmgMax}`);
-    setFx({ [s.id]: 3 });
+    setFx({ [s.id]: 3 }, s.id);
     ok(pw('迫近攻击').power === s.dmgMax + 135, `3 层 = ${s.dmgMax} + 135（实际 ${pw('迫近攻击').power}）`);
   }
   // 条件式
   {
     const s = byName('见招拆招');
     setFx({});
-    ok(pw('见招拆招').power === s.dmgMax, '条件未满足 = 基础威力');
-    setFx({ [s.id]: 1 });
-    ok(pw('见招拆招').power === s.dmgMax + 55, `条件满足 = +55（实际 ${pw('见招拆招').power}）`);
+    ok(pw('见招拆招').power === s.dmgMax, '开关没开 = 基础威力');
+    setFx({}, s.id);
+    ok(pw('见招拆招').power === s.dmgMax + 55, `开关打开 = +55（实际 ${pw('见招拆招').power}）`);
   }
   // 按生命损失 + 上限
   {
     const s = byName('垂死反击');
-    setFx({ [s.id]: 0 });
+    setFx({ [s.id]: 0 }, s.id);
     ok(pw('垂死反击').power === s.dmgMax, '满血 = 基础威力');
-    setFx({ [s.id]: 20 });
+    setFx({ [s.id]: 20 }, s.id);
     ok(pw('垂死反击').power === s.dmgMax + 20, `失去 20% = +20（实际 ${pw('垂死反击').power}）`);
-    setFx({ [s.id]: 9000 });
+    setFx({ [s.id]: 9000 }, s.id);
     ok(pw('垂死反击').power === 500, `超大失去量被上限 500 卡住（实际 ${pw('垂死反击').power}）`);
   }
   // 按能耗（自动取技能自身能耗，不需要填状态）
@@ -934,41 +959,59 @@ console.log('\n· 技能特殊效果（数值型，进威力计算）');
   {
     const s = byName('穿膛');
     setFx({});
-    ok(pw('穿膛').mult === 1, '穿膛：条件未满足倍率 = 1');
-    setFx({ [s.id]: 1 });
-    ok(pw('穿膛').mult === 5, '穿膛：条件满足倍率 = 5');
+    ok(pw('穿膛').mult === 1, '穿膛：开关没开倍率 = 1');
+    setFx({}, s.id);
+    ok(pw('穿膛').mult === 5, '穿膛：开关打开倍率 = 5');
   }
   // 体重查表（档位 0 是合法值，不能被当成"没填"）
   {
     const s = byName('吨位压制');
-    setFx({ [`weight:${s.id}`]: 0 });
+    setFx({ [`weight:${s.id}`]: 0 }, s.id);
     ok(pw('吨位压制').power === 160, `体重最低档 = 160（实际 ${pw('吨位压制').power}）`);
-    setFx({ [`weight:${s.id}`]: 5 });
+    setFx({ [`weight:${s.id}`]: 5 }, s.id);
     ok(pw('吨位压制').power === 80, '体重最高档 = 80');
   }
-  // 界面：结果区出现效果行与输入框，改状态会重算
+  // 手填显示威力优先
   {
-    const s = byName('迫近攻击');
+    const s = byName('雪原狩猎');
+    setFx({ [`pow:${s.id}`]: 999 }, s.id);
+    const m = pw('雪原狩猎');
+    ok(m.power === 999 && m.manual, `手填 999 后按 999 算（实际 ${m.power}）`);
+    ok(m.base === s.dmgMax, '仍保留初始面板威力');
+  }
+  // 界面：技能卡片 + 技能设置弹窗
+  {
+    // 从**实际可用**的技能里挑一个带效果的（别硬编码名字，岚鸟根本没有迫近攻击）
+    const effIds = new Set(Object.keys(api.SKILL_EFFECTS).map(Number));
+    const s = api.usableSkillsOf(A2.bySpirit.get('20:1')).find((x) => effIds.has(x.id));
+    ok(!!s, `岚鸟可用技能里有带效果的：${s?.name}`);
     A2.calc.a = '20:1'; A2.calc.b = '43:1'; A2.calc.skillA = s.id;
     A2.calc.hpPctA = 100; A2.calc.hpPctB = 100;
     setFx({});
     A2.view = 'calc';
     ids.get('app').innerHTML = '';
     api.render();
-    const res = () => ids.get('app')._el.querySelector('.calc-results');
-    ok(/技能效果/.test(res().innerHTML), '结果区出现「技能效果」行');
-    ok(res().querySelectorAll('[data-fx]').length > 0, '给出了对局状态输入框');
-    const inp = res().querySelector('[data-fx]');
-    inp.value = '3';
-    inp.dispatch('change');
-    ok(A2.calc.fx[String(s.id)] === 3, '输入被记住');
-    ok(/\+135/.test(res().innerHTML), '结果区显示出 +135 修正');
-    // 技能表里也标出带特殊效果的技能
-    ok(ids.get('app')._el.querySelectorAll('.calc-skill-table .tag.fx').length > 0,
-      '技能表里标出带特殊效果的技能');
+    const cards = () => ids.get('app')._el.querySelectorAll('.sk-card');
+    ok(cards().length > 12, `技能卡片渲染出 ${cards().length} 张`);
+    const c0 = cards()[0];
+    ok(!!c0.querySelector('.sk-icon') && !!c0.querySelector('.sk-desc') && !!c0.querySelector('.sk-pow'), '卡片有图标/描述/威力');
+    ok(!!c0.querySelector('.sk-dmg'), '卡片右侧有预计伤害');
+    const card = [...cards()].find((x) => Number(x.dataset.calcPick) === s.id);
+    ok(!!card && !!card.querySelector('.btn-fx'), `「${s.name}」有技能设置按钮`);
+    card.querySelector('.btn-fx').click();
+    ok(A2.calc.fxOpen.a === String(s.id), '点按钮打开了设置弹窗');
+    ok(!!ids.get('app')._el.querySelector('.fx-modal'), '弹窗渲染出来');
+    ok(/手动开关/.test(ids.get('app')._el.querySelector('.fx-modal').innerHTML), '弹窗标题是「手动开关」');
+    // 打开生效开关 -> 卡片会显示生效状态
+    ids.get('app')._el.querySelector('.fx-modal [data-fx-toggle]').click();
+    ok(A2.calc.fx[`on:${s.id}`] === 1, '开关被打开');
+    const onCard = [...cards()].find((x) => Number(x.dataset.calcPick) === s.id);
+    ok(!/未生效/.test(onCard.querySelector('.btn-fx').innerHTML), '卡片上不再标「未生效」');
+    // 普通技能不该有按钮
+    ok([...cards()].some((x) => !x.querySelector('.btn-fx')), '普通技能没有技能设置按钮');
   }
   // 还原
-  setFx({});
+  A2.calc.fx = {}; A2.calc.fxOpen = {};
   A2.calc.skillA = 7150060;
   ids.get('app').innerHTML = '';
   api.render();
@@ -1099,9 +1142,9 @@ console.log('\n· 斩杀线：这一招 + 几层星陨到线（含回合末掉�
     const lo = [...killCols('.lo-table .lo-kill')];
     ok(lo.length === 8, `两侧四技能槽各 4 行斩杀列（共 ${lo.length}）`);
     ok(lo.every((c) => /层|—|不需要/.test(c.innerHTML)), '四技能槽的斩杀格都有内容');
-    // 两侧的技能表也该有斩杀列
-    const st = [...killCols('.calc-skill-table .lo-kill')];
-    ok(st.length > 12, `两侧技能表也有斩杀列（共 ${st.length} 格）`);
+    // 两侧的技能卡片也该有斩杀标记（卡片里叫 .sk-kill）
+    const st = [...killCols('.calc-skill-table .sk-kill')];
+    ok(st.length > 0, `两侧技能卡片也有斩杀标记（共 ${st.length} 张卡片带）`);
   }
   // 还原
   setupK([]);

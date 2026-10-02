@@ -102,6 +102,8 @@ const STATE = {
     hpPctA: 100, hpPctB: 100,
     // 技能特殊效果的"对局状态"：键见 skillPowerOf（叠加层数 / 条件开关 / 能量 / 体重档位…）
     fx: {},
+    // 哪一侧的哪张技能卡片打开了「技能设置」弹窗
+    fxOpen: {},
     // 精灵选择下拉：哪一侧展开着、各自的搜索词
     spOpen: null, spQuery: { a: '', b: '' },
     level: 60,
@@ -1849,6 +1851,26 @@ const SKILL_EFFECTS = {
   // ── 两侧技能威力 ──────────────────────────────────────────
   7070030: { kind: 'adjacent', div: 3, label: '威力 = 两侧技能威力和 ÷ 3' },      // 钢钻
   7070200: { kind: 'adjacent-diff', div: 4, label: '威力 += 两侧技能威力差 ÷ 4' }, // 六自由度
+  // ── 二选一：点开后先选触发哪一个分支，再按选中的算 ──────────
+  7021230: {
+    kind: 'choice',
+    label: '每次使用后威力永久 +20 / 应对状态时本次 +100%',
+    options: [
+      { label: '应对状态时本次威力 +100%', add: 70, mult: 2 },
+      { label: '每次使用后威力永久 +20', per: 20 },
+    ],
+  }, // 友谊满溢：基础 70，+100% = +70
+  7140340: {
+    kind: 'choice',
+    label: '本次威力 +20 / 应对状态时本次 +140',
+    options: [
+      { label: '应对状态时本次威力 +140', add: 140 },
+      { label: '本次威力 +20', add: 20 },
+    ],
+  }, // 驱赶
+  // ── 依赖场上其他精灵：用开关表示"是否生效"，层数/只数靠输入 ──
+  7180310: { kind: 'stack', per: 30, label: '敌方每有 1 只力竭精灵 +30' },  // 牵连
+  7160330: { kind: 'cond', add: 100, when: '敌方有萌化', label: '敌方有萌化 +100' }, // 拆礼物
 };
 
 /** 某个技能有没有数值型特殊效果 */
@@ -1875,13 +1897,36 @@ function effectAutoLabel(fx) {
     case 'weight': return '按体重查表取威力';
     case 'adjacent': return `威力 = 两侧技能威力和 ÷ ${fx.div}`;
     case 'adjacent-diff': return `威力 += 两侧技能威力差 ÷ ${fx.div}`;
+    case 'choice': return (fx.options ?? []).map((o) => o.label).join(' / ');
     default: return '有特殊效果';
   }
 }
 
-/** 这条效果要不要靠用户填对局状态（要的话界面上给个输入框） */
+/**
+ * 这条效果要不要"先打开开关"才生效。
+ *   要开关    —— 条件式效果（条件是否成立由场上决定，得让用户确认）
+ *   不用开关  —— 值完全由技能自身或对局外部算出来的（按能耗、敌方总能耗、两侧威力…），
+ *                直接算即可
+ * 关掉开关时，这个技能按**初始面板威力**算（用户要求：否则就按初始面板技能）。
+ */
+function effectHasSwitch(fx) {
+  if (!fx) return false;
+  return !['cost-per', 'cost-total', 'adjacent'].includes(fx.kind);
+}
+
+/** 是不是"二选一"技能（描述里的「选择：A 或 B」） */
+function effectIsChoice(fx) {
+  return fx?.kind === 'choice';
+}
+
+/** 二选一的两个分支 */
+function effectChoices(fx) {
+  return fx?.options ?? [];
+}
+
+/** 这条效果需不需要靠用户填数值状态（要的话界面给输入框） */
 function effectNeedsState(fx) {
-  return !!fx && ['stack', 'stack-x2', 'cond', 'hp-loss', 'energy-per', 'energy-all', 'weight', 'adjacent', 'adjacent-diff', 'mult'].includes(fx.kind);
+  return !!fx && ['stack', 'stack-x2', 'hp-loss', 'energy-per', 'energy-all', 'weight', 'adjacent', 'adjacent-diff'].includes(fx.kind);
 }
 
 /**
@@ -1896,10 +1941,7 @@ function skillPowerOf(side, sp, sk, otherSp) {
   const fx = skillEffectOf(sk);
   const st = STATE.calc.fx ?? {};
   const key = sk ? String(sk.id) : '';
-  if (!fx) {
-    if (typeof window !== 'undefined' && window.__fxProbe) window.__fxProbe(sk, fx);
-    return { power: base, base, parts: [], mult: 1, needState: false, fx: null };
-  }
+  if (!fx) return { power: base, base, parts: [], mult: 1, needState: false, fx: null, on: false };
 
   const cap = fx.cap ?? Infinity;
   // 上限要作用在**最终威力**上（垂死反击是"每失去 5% +5，上限 500"），
@@ -1910,6 +1952,48 @@ function skillPowerOf(side, sp, sk, otherSp) {
   let power = base;
   let needState = false;
   const num = (k) => Number(st[k] ?? 0) || 0;
+
+  // 手填的显示威力优先（用户截图里的「修改」）—— 填了就完全按它算
+  // 效果开关：关掉就按**初始面板威力**算（面板上的 dmgMax）
+  const needSwitch = effectHasSwitch(fx);
+  const powKey = `pow:${key}`;
+  if (Object.prototype.hasOwnProperty.call(st, powKey)) {
+    const v = Number(st[powKey]) || 0;
+    return { power: Math.round(fin(v)), base, parts: [{ label: '手填威力', value: v - base }], mult: 1, needState: false, fx, on: true, needSwitch, manual: true };
+  }
+
+  const swKey = `on:${key}`;
+  const on = needSwitch ? !!st[swKey] : true;
+  if (!on) {
+    return {
+      power: base, base, parts: [], mult: 1, needState: false, fx, on: false, needSwitch,
+    };
+  }
+
+  // 二选一：先看用户选了哪一个分支
+  if (fx.kind === 'choice') {
+    const opts = fx.options ?? [];
+    const pickKey = `choice:${key}`;
+    const has = Object.prototype.hasOwnProperty.call(st, pickKey);
+    const idx = has ? Math.min(opts.length - 1, Math.max(0, Number(st[pickKey]) || 0)) : 0;
+    const opt = opts[idx];
+    needState = true;
+    if (opt) {
+      if (opt.per) {
+        const n = num(key);
+        const add = n * opt.per;
+        power = clamp(base + add);
+        if (n) parts.push({ label: `${opt.label}（${n} 层 × +${opt.per}）`, value: add });
+      } else {
+        power = clamp(base + (opt.add ?? 0));
+        parts.push({ label: opt.label, value: opt.add ?? 0 });
+      }
+    }
+    return {
+      power: Math.round(fin(power)), base, parts, mult: 1, needState, fx, on: true, needSwitch,
+      choiceIdx: idx, choiceOptions: opts,
+    };
+  }
 
   switch (fx.kind) {
     case 'stack': {
@@ -1928,9 +2012,11 @@ function skillPowerOf(side, sp, sk, otherSp) {
       break;
     }
     case 'cond': {
-      const on = num(key) ? 1 : 0;
-      needState = true;
-      if (on) { power = clamp(base + fx.add); parts.push({ label: fx.label, value: fx.add }); }
+      // ⚠ 条件式只看「效果开关」：开关打开就表示条件成立。
+      // （早先这里还查了一遍 state[key]，于是打开了开关也不生效 —— 两个判断打架，已统一）
+      needState = false;
+      power = clamp(base + fx.add);
+      parts.push({ label: fx.label, value: fx.add });
       break;
     }
     case 'hp-loss': {
@@ -1966,8 +2052,8 @@ function skillPowerOf(side, sp, sk, otherSp) {
       break;
     }
     case 'mult': {
-      needState = true;
-      // 倍数伤害在结算时才乘，威力本身不变
+      // 倍数伤害在结算时才乘，威力本身不变；是否生效同样只看效果开关
+      needState = false;
       break;
     }
     case 'cost-total': {
@@ -2004,8 +2090,8 @@ function skillPowerOf(side, sp, sk, otherSp) {
     }
     default: break;
   }
-  const mult = (fx.kind === 'mult' && num(key)) ? fx.n : 1;
-  return { power: Math.round(fin(power)), base, parts, mult, needState, fx };
+  const mult = (fx.kind === 'mult' && on) ? fx.n : 1;
+  return { power: Math.round(fin(power)), base, parts, mult, needState, fx, on: true, needSwitch };
 }
 
 /**
@@ -2027,11 +2113,11 @@ function skillEffectInputs(side, sk) {
     case 'stack-x2':
       return box(key, '已翻倍次数');
     case 'cond':
-      return `<label class="fx-cb"><input type="checkbox" data-fx="${key}"${Number(v(key)) ? ' checked' : ''}>
-        满足「${esc(fx.when ?? fx.label)}」</label>`;
+      // 条件式不再额外放复选框 —— 是否生效由弹窗里的「生效开关」统一控制，
+      // 放两个开关会互相打架（踩过）
+      return '';
     case 'mult':
-      return `<label class="fx-cb"><input type="checkbox" data-fx="${key}"${Number(v(key)) ? ' checked' : ''}>
-        满足「${esc(fx.label)}」</label>`;
+      return '';
     case 'hp-loss':
       return fx.who === 'def'
         ? box(`def:${key}`, '敌方已失去生命 %', 'max="100"')
@@ -2368,6 +2454,8 @@ function damageSkillTable(side, sp, otherSp) {
   const all = usableSkillsOf(sp);
   const damage = all.filter((s) => (s.dmgMax ?? 0) > 0 && s.cat !== '状态');
   const noPower = all.filter((s) => !((s.dmgMax ?? 0) > 0 && s.cat !== '状态'));
+  // 哪张技能卡片打开了「技能设置」弹窗（每侧最多一个）
+  const flag = c.fxOpen?.[side] ?? null;
 
   const rows = damage.map((s) => {
     const ak = (s.cat ?? '') === '魔法' ? 'satk' : 'patk';
@@ -2397,52 +2485,137 @@ function damageSkillTable(side, sp, otherSp) {
     : s.src === 'legendary' ? '<span class="tag legend">传说</span>'
       : s.src === 'machine' ? '<span class="tag machine">技能石</span>' : '');
 
-  const rowHtml = (s, r, killN, extraCls, fp) => `
-    <tr class="clickable${s.id === curId ? ' cur' : ''}${extraCls ?? ''}${fp ? ' has-fx' : ''}" data-calc-pick="${s.id}" data-pick-side="${side}">
-      <td class="mid">${skillIconTag(s.id)}</td>
-      <td class="skill-name">${esc(s.name)}${srcTag(s)}${fp && fp.fx ? `<span class="tag fx" title="${esc(fp.fx.label ?? '')}">效果</span>` : ''}</td>
-      <td class="mid">${s.typeId ? badge(s.typeId) : ''}</td>
-      <td class="num">${powerCell(s)}${fp && fp.power !== fp.base ? `<span class="desc"> → ${fp.power}</span>` : ''}</td>
-      <td class="num">${r ? `<b>${r.dmg}</b>${fp?.mult > 1 ? `<span class="desc"> ×${fp.mult}</span>` : ''}` : '<span class="desc">0</span>'}</td>
-      <td class="num">${r ? (r.dmg > 0 ? Math.ceil(r.targetHp / r.dmg) : '—') : '—'}</td>
-      ${wantKill ? `<td class="num lo-kill">${r && r.dmg > 0 ? killLayerCell(killN) : '<span class="desc">—</span>'}</td>` : ''}
-    </tr>`;
+  /**
+   * 一张技能卡片（按用户截图的样子）：
+   *   [图标]  技能名 ★ 分类 物攻/魔攻 威力      ┌───────────┐
+   *           效果描述（有特殊效果时）           │ 预计伤害  │
+   *           [威力 169] [技能设置]              │   196     │
+   *                                              │  55.4%    │
+   *                                              └───────────┘
+   * 「技能设置」只在有额外效果时出现 —— 用户要求：把所有有额外效果的技能统一加上开关，
+   * 否则就按初始面板技能算。
+   */
+  const cardHtml = (s, r, killN, fp, noPowerFlag) => {
+    const isCur = s.id === curId;
+    const dmgShow = r ? r.dmg : 0;
+    const pct = r && r.targetHp > 0 ? (r.dmg / r.targetHp) * 100 : 0;
+    const skillsOfFx = fp?.fx ? ` data-has-fx="1"` : '';
+    return `<div class="sk-card${isCur ? ' cur' : ''}${noPowerFlag ? ' no-power' : ''}" data-calc-pick="${s.id}" data-pick-side="${side}"${skillsOfFx}>
+      <div class="sk-icon">${skillIconTag(s.id)}</div>
+      <div class="sk-main">
+        <div class="sk-title">
+          <b>${esc(s.name)}</b>
+          ${srcTag(s)}
+          <span class="sk-meta">${esc(s.cat ?? '')}${s.energy ? ` · 耗能 ${s.energy}` : ''}</span>
+        </div>
+        <div class="sk-desc">${glossaryTag(s.desc)}</div>
+        <div class="sk-bottom">
+          <span class="sk-pow" title="实际参与计算的威力${fp && fp.power !== fp.base ? `（初始面板 ${fp.base}）` : ''}">
+            威力 <b>${fp ? fp.power : (s.dmgMax ?? 0)}</b>${fp && fp.power !== fp.base ? `<i class="desc">/${fp.base}</i>` : ''}
+          </span>
+          ${fp?.mult > 1 ? `<span class="sk-mult">伤害 ×${fp.mult}</span>` : ''}
+          ${fp?.fx ? `<button type="button" class="btn-fx${fp.on ? ' on' : ''}" data-fx-open="${s.id}"
+            title="这个技能有额外效果，点开设置">技能设置${fp.on ? '' : '（未生效）'}</button>` : ''}
+          ${!fp?.fx && !noPowerFlag ? '<span class="desc" style="font-size:11px">按初始面板威力</span>' : ''}
+          ${wantKill && r && r.dmg > 0 ? `<span class="sk-kill" title="打完再补这么多层星陨到斩杀线">斩杀 ${killLayerCell(killN)}</span>` : ''}
+        </div>
+      </div>
+      <div class="sk-dmg">
+        <span class="desc">预计伤害</span>
+        <b>${dmgShow}</b>
+        <span class="sk-pct">${pct.toFixed(1)}%</span>
+      </div>
+    </div>`;
+  };
 
-  const body = rows.map(({ s, r, killN, fp }) => rowHtml(s, r, killN, '', fp)).join('');
-  // 无威力的功能 / 防御 / 状态技能：**也直接列出来**（用户要求全列，不再折叠），
-  // 排在伤害技能之后、按名字排序（它们没有伤害可比），压暗并标「无威力」
+  const body = rows.map(({ s, r, killN, fp }) => cardHtml(s, r, killN, fp, false)).join('');
+  // 无威力的功能 / 防御 / 状态技能：也直接列出来（用户要求全列），放在伤害技能之后并压暗
   const noPowerBody = noPower
     .slice()
     .sort((x, y) => x.name.localeCompare(y.name, 'zh'))
-    .map((s) => rowHtml(s, null, null, ' no-power', null)).join('');
-  // 两段之间的分隔行（伤害技能在上、无威力的在下）
-  const sep = noPower.length && damage.length
-    ? `<tr class="cst-sep"><td colspan="${wantKill ? 7 : 6}">
-        以下 ${noPower.length} 个技能没有威力（功能 / 防御 / 状态），点了不会造成伤害</td></tr>`
-    : '';
+    .map((s) => cardHtml(s, null, null, skillPowerOf(side, sp, s, otherSp), true)).join('');
 
   const bloodCount = damage.filter((x) => x.src === 'blood').length;
   const bloodNoPower = noPower.filter((x) => x.src === 'blood').length;
+  const fxCount = rows.filter((x) => x.fp?.fx).length;
 
   return `<div class="calc-skill-table" data-skill-table="${side}">
     <div class="cst-head">
-      <h3>${esc(sp.name)} 的技能 <span class="n">${all.length} 个 · 伤害 ${damage.length} · 功能/防御/状态 ${noPower.length}</span></h3>
-      <span class="desc">升级 / 技能石 / 传说 / 血脉${bloodCount + bloodNoPower ? `（含 ${bloodCount + bloodNoPower} 个血脉技能）` : ''} · 点一行设为这一侧的当前技能</span>
+      <h3>${esc(sp.name)} 的技能 <span class="n">${all.length} 个 · 伤害 ${damage.length} · 功能/防御/状态 ${noPower.length}${fxCount ? ` · 带效果 ${fxCount}` : ''}</span></h3>
+      <span class="desc">升级 / 技能石 / 传说 / 血脉${bloodCount + bloodNoPower ? `（含 ${bloodCount + bloodNoPower} 个血脉技能）` : ''} · 点卡片设为这一侧的当前技能</span>
     </div>
-    <div class="table-wrap" style="max-height:560px;overflow:auto"><table>
-      <thead><tr>
-        <th class="mid">图标</th><th>技能</th><th class="mid">系别</th><th class="num">威力</th>
-        <th class="num">预计伤害</th><th class="num">需要几下</th>
-        ${wantKill ? '<th class="num">斩杀线</th>' : ''}
-      </tr></thead>
-      <tbody>${body}${sep}${noPowerBody}</tbody>
-    </table></div>
+    <div class="sk-list">${body}</div>
+    ${noPower.length ? `<div class="sk-sep">以下 ${noPower.length} 个技能没有威力（功能 / 防御 / 状态）</div>
+      <div class="sk-list">${noPowerBody}</div>` : ''}
     <div class="desc" style="margin-top:6px;font-size:12px">
-      上半段是伤害技能（按伤害降序）；下半段是 ${noPower.length} 个无威力的功能 / 防御 / 状态技能（灰显、按名字排序，点了不会造成伤害）。
-      ${wantKill ? '「斩杀线」= 这一招打完再补多少层星陨到线；回合末掉血是攻击之后才结算的，所以打剩的血量不超过它也算到线。' : ''}
+      带额外效果的技能会出现「技能设置」按钮：<b>开关关掉就按初始面板威力算</b>；
+      重新打开才会算上效果（二选一的技能点开后先选触发哪一个）。
+      ${wantKill ? '「斩杀」= 打完再补这么多层星陨到线。' : ''}
+    </div>
+    ${flag ? skillFxDialog(side, sp, otherSp, flag) : ''}
+  </div>`;
+}
+
+/**
+ * 「技能设置」弹窗：一个技能的所有额外效果都列在这里。
+ * 每条效果一行：名称 + 当前值，三态开关（是 / 关 / 二选一的两个分支）。
+ * 底部给出"显示威力"，可以手填覆盖（用户截图里的「修改」）。
+ */
+function skillFxDialog(side, sp, otherSp, skillId) {
+  // ⚠ bySkill 的键是数字；skillId 从 dataset 来是字符串，不转就查不到（踩过：弹窗一直空白）
+  const sk = STATE.bySkill.get(Number(skillId));
+  if (!sk) return '';
+  const fp = skillPowerOf(side, sp, sk, otherSp);
+  if (!fp.fx) return '';
+  const key = String(sk.id);
+  const st = STATE.calc.fx ?? {};
+  const on = !!st[`on:${key}`];
+  const opts = effectChoices(fp.fx);
+  const pick = Number(st[`choice:${key}`] ?? 0) || 0;
+  const override = st[`pow:${key}`];
+  const rows = [];
+
+  if (opts.length) {
+    // 二选一：点哪个就用哪个
+    for (const [i, o] of opts.entries()) {
+      const val = o.per ? `${(Number(st[key] ?? 0) || 0)} 层 × ${o.per}` : `+${o.add ?? 0}`;
+      rows.push(`<div class="fx-line${pick === i ? ' on' : ''}">
+        <span class="fx-k">${esc(o.label)}</span>
+        <span class="fx-v">${val}</span>
+        <button type="button" class="fx-opt${pick === i ? ' on' : ''}" data-fx-choice="${key}:${i}"
+          ${on ? '' : 'disabled'}>${pick === i ? '已选' : '选它'}</button>
+      </div>`);
+    }
+  } else {
+    rows.push(`<div class="fx-line${on ? ' on' : ''}">
+      <span class="fx-k">${esc(fp.fx.label ?? '')}</span>
+      <span class="fx-v">${fp.parts.length ? fp.parts.map((p) => `${p.value >= 0 ? '+' : ''}${p.value}`).join(' ') : '无修正'}</span>
+      <button type="button" class="fx-opt${on ? ' on' : ''}" data-fx-toggle="${key}">${on ? '已生效' : '未生效'}</button>
+    </div>`);
+  }
+
+  // 需要的数值状态（层数 / 失去生命% / 能量 / 体重档位…）
+  const stateBox = effectNeedsState(fp.fx) ? `<div class="fx-state">${skillEffectInputs(side, sk)}</div>` : '';
+
+  return `<div class="fx-modal" data-fx-modal="${skillId}">
+    <div class="fx-modal-head">
+      <b>${esc(sk.name)} 威力 ${fp.power} 手动开关</b>
+      <button type="button" class="fx-close" data-fx-close="1" title="关闭">×</button>
+    </div>
+    <div class="fx-modal-sub">${esc(sk.descPlain ?? '')}</div>
+    <div class="fx-lines">${rows.join('')}</div>
+    ${stateBox}
+    <div class="fx-modal-foot">
+      <label class="fx-in">显示威力
+        <input type="number" min="0" max="999999" value="${override ?? fp.power}" data-fx-pow="${key}">
+      </label>
+      <button type="button" class="fx-opt" data-fx-pow-apply="${key}">修改</button>
+      ${override != null ? `<button type="button" class="fx-opt" data-fx-pow-reset="${key}">还原</button>` : ''}
+      <span class="desc">填了就用手填的威力参与计算</span>
     </div>
   </div>`;
 }
+
 
 function viewCalc() {
   const c = STATE.calc;
@@ -3103,6 +3276,57 @@ function bindView() {
         render();
       });
     }
+    // 打开 / 关闭某张技能卡片的「技能设置」弹窗
+    for (const btn of document.querySelectorAll('[data-fx-open]')) {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();           // 别触发卡片本身的"设为当前技能"
+        const side = btn.closest('[data-skill-table]')?.dataset.skillTable ?? 'a';
+        STATE.calc.fxOpen ??= {};
+        STATE.calc.fxOpen[side] = STATE.calc.fxOpen[side] === btn.dataset.fxOpen ? null : btn.dataset.fxOpen;
+        render();
+      });
+    }
+    for (const btn of document.querySelectorAll('[data-fx-close]')) {
+      btn.addEventListener('click', () => { STATE.calc.fxOpen = {}; render(); });
+    }
+    // 效果开关（生效 / 不生效）
+    for (const btn of document.querySelectorAll('[data-fx-toggle]')) {
+      btn.addEventListener('click', () => {
+        const k = `on:${btn.dataset.fxToggle}`;
+        STATE.calc.fx ??= {};
+        STATE.calc.fx[k] = STATE.calc.fx[k] ? 0 : 1;
+        render();
+      });
+    }
+    // 二选一：选触发哪一个分支
+    for (const btn of document.querySelectorAll('[data-fx-choice]')) {
+      btn.addEventListener('click', () => {
+        const [k, i] = btn.dataset.fxChoice.split(':');
+        STATE.calc.fx ??= {};
+        STATE.calc.fx[`choice:${k}`] = Number(i) || 0;
+        STATE.calc.fx[`on:${k}`] = 1;      // 选了就等于启用
+        render();
+      });
+    }
+    // 手填显示威力
+    for (const btn of document.querySelectorAll('[data-fx-pow-apply]')) {
+      btn.addEventListener('click', () => {
+        const k = btn.dataset.fxPowApply;
+        const inp = document.querySelector(`[data-fx-pow="${k}"]`);
+        const v = Number(inp?.value);
+        if (!Number.isFinite(v)) return;
+        STATE.calc.fx ??= {};
+        STATE.calc.fx[`pow:${k}`] = Math.max(0, Math.round(v));
+        render();
+      });
+    }
+    for (const btn of document.querySelectorAll('[data-fx-pow-reset]')) {
+      btn.addEventListener('click', () => {
+        STATE.calc.fx ??= {};
+        delete STATE.calc.fx[`pow:${btn.dataset.fxPowReset}`];
+        render();
+      });
+    }
     // 状态面板：星陨层数（上限 99；与「状态造成的伤害」里那行共用同一份数据）
     for (const el of document.querySelectorAll('[data-st-star]')) {
       el.addEventListener('change', () => {
@@ -3454,7 +3678,7 @@ $('#themeBtn').addEventListener('click', () => {
     console.log('[roco] 数据就绪', c);
     // 给自动化测试用的只读钩子（浏览器里也可以 console 里手动查）
     window.__roco = {
-      STATE, data: STATE.data,
+      STATE, data: STATE.data, SKILL_EFFECTS, statusDamageOf,
       filterSpirits, filterSkills, spiritSkillsOf, learnersOf, spiritDetail, skillDetail,
       glossaryDetail, render, index, panelStat, levelCoef, typeEffect, usableSkillsOf,
       NATURES, natureByName, panelValue, panelInt, ivOf, defaultNat, stateIcon, withCalcSide, bindNatalBlock,
@@ -3465,6 +3689,7 @@ $('#themeBtn').addEventListener('click', () => {
       starfallPower, starfallKillLayers, triggersStarfall, damageWithPower, layersForPower, killLayerCell,
       // 技能特殊效果
       SKILL_EFFECTS, skillPowerOf, skillEffectOf, effectNeedsState, skillEffectInputs, damageSkillTable,
+      effectHasSwitch, effectIsChoice, effectChoices, effectAutoLabel, skillFxDialog,
       // 血量与加点
       hpMaxOf, hpNowOf, targetHpOf, spiritCalcOf, calcStatsOf, natalBlock, redrawNatalBlock,
       statBreakdown, natalBoxEl, defaultInvestSet,
