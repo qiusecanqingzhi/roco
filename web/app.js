@@ -2123,43 +2123,38 @@ function damageSkillTable(side, sp, otherSp) {
     </tr>`;
 
   const body = rows.map(({ s, r, killN }) => rowHtml(s, r, killN)).join('');
-  // 无威力的技能：排序时放最后（它们没有伤害可比）
+  // 无威力的功能 / 防御 / 状态技能：**也直接列出来**（用户要求全列，不再折叠），
+  // 排在伤害技能之后、按名字排序（它们没有伤害可比），压暗并标「无威力」
   const noPowerBody = noPower
     .slice()
     .sort((x, y) => x.name.localeCompare(y.name, 'zh'))
     .map((s) => rowHtml(s, null, null, ' no-power')).join('');
+  // 两段之间的分隔行（伤害技能在上、无威力的在下）
+  const sep = noPower.length && damage.length
+    ? `<tr class="cst-sep"><td colspan="${wantKill ? 7 : 6}">
+        以下 ${noPower.length} 个技能没有威力（功能 / 防御 / 状态），点了不会造成伤害</td></tr>`
+    : '';
 
   const bloodCount = damage.filter((x) => x.src === 'blood').length;
   const bloodNoPower = noPower.filter((x) => x.src === 'blood').length;
 
   return `<div class="calc-skill-table" data-skill-table="${side}">
     <div class="cst-head">
-      <h3>${esc(sp.name)} 的技能 <span class="n">${all.length} 个（伤害 ${damage.length}）</span></h3>
-      <span class="desc">升级 / 技能石 / 传说 / 血脉${bloodCount ? `（伤害技能里含 ${bloodCount} 个血脉）` : ''} · 点一行设为这一侧的当前技能</span>
+      <h3>${esc(sp.name)} 的技能 <span class="n">${all.length} 个 · 伤害 ${damage.length} · 功能/防御/状态 ${noPower.length}</span></h3>
+      <span class="desc">升级 / 技能石 / 传说 / 血脉${bloodCount + bloodNoPower ? `（含 ${bloodCount + bloodNoPower} 个血脉技能）` : ''} · 点一行设为这一侧的当前技能</span>
     </div>
-    <div class="table-wrap" style="max-height:520px;overflow:auto"><table>
+    <div class="table-wrap" style="max-height:560px;overflow:auto"><table>
       <thead><tr>
         <th class="mid">图标</th><th>技能</th><th class="mid">系别</th><th class="num">威力</th>
         <th class="num">预计伤害</th><th class="num">需要几下</th>
         ${wantKill ? '<th class="num">斩杀线</th>' : ''}
       </tr></thead>
-      <tbody>${body}</tbody>
+      <tbody>${body}${sep}${noPowerBody}</tbody>
     </table></div>
-    ${noPower.length ? `
-    <details class="no-power-fold">
-      <summary>还有 ${noPower.length} 个无威力的功能 / 状态技能${bloodNoPower ? `（含 ${bloodNoPower} 个血脉）` : ''}，点了也不会造成伤害</summary>
-      <div class="table-wrap" style="max-height:300px;overflow:auto"><table>
-        <thead><tr>
-          <th class="mid">图标</th><th>技能</th><th class="mid">系别</th><th class="num">威力</th>
-          <th class="num">预计伤害</th><th class="num">需要几下</th>
-          ${wantKill ? '<th class="num">斩杀线</th>' : ''}
-        </tr></thead>
-        <tbody>${noPowerBody}</tbody>
-      </table></div>
-    </details>` : ''}
-    ${wantKill ? `<div class="desc" style="margin-top:6px;font-size:12px">
-      「斩杀线」= 这一招打完再补多少层星陨到线；回合末掉血是攻击之后才结算的，所以打剩的血量不超过它也算到线。
-    </div>` : ''}
+    <div class="desc" style="margin-top:6px;font-size:12px">
+      上半段是伤害技能（按伤害降序）；下半段是 ${noPower.length} 个无威力的功能 / 防御 / 状态技能（灰显、按名字排序，点了不会造成伤害）。
+      ${wantKill ? '「斩杀线」= 这一招打完再补多少层星陨到线；回合末掉血是攻击之后才结算的，所以打剩的血量不超过它也算到线。' : ''}
+    </div>
   </div>`;
 }
 

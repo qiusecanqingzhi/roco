@@ -415,13 +415,15 @@ ok(rankRows > 12, `技能表共 ${rankRows} 行（比原来的前 12 个多）`)
     const rendered = (slice.match(/data-calc-pick="/g) || []).length;
     ok(rendered === usable.length,
       `${sp.name}(${side}) 的表列出了全部 ${usable.length} 个可用技能（实际 ${rendered}）`);
-    // 无威力的那些要出现在折叠区里，且被标成 no-power
+    // 无威力的那些也要**直接列在主表里**（用户要求全列，不折叠），且被标成 no-power
     const noPower = usable.filter((s) => !((s.dmgMax ?? 0) > 0 && s.cat !== '状态'));
     const missing = noPower.filter((s) => !slice.includes(`data-calc-pick="${s.id}"`));
     ok(missing.length === 0, `${sp.name} 的 ${noPower.length} 个无威力技能都在表里（缺 ${missing.length}）`);
     ok((slice.match(/class="clickable[^"]*no-power"/g) || []).length === noPower.length,
       `无威力技能都带 no-power 标记（${noPower.length} 个）`);
-    ok(/<details class="no-power-fold">/.test(slice) && /无威力/.test(slice), '有折叠区且写明是无威力技能');
+    ok(!/<details/.test(slice), '不再用折叠区，全部平铺在主表里');
+    ok(/没有威力|无威力/.test(slice), '有说明写清哪些是没有威力的技能');
+    if (noPower.length) ok(/class="cst-sep"/.test(slice), '两段之间有分隔行');
   }
 }
 

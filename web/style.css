@@ -744,18 +744,16 @@ table.lo-table .lo-pct { font-size: 11px; color: var(--text-dim); font-variant-n
 .tag.legend { color: #7c5cbf; }
 .tag.machine { color: var(--text-faint); }
 
-/* 无威力的功能/状态技能：默认折叠，展开后也压暗一点，免得和伤害技能混在一起 */
-.no-power-fold { margin-top: 8px; }
-.no-power-fold > summary {
-  cursor: pointer; font-size: 12px; color: var(--text-dim);
-  padding: 4px 0; user-select: none;
-}
-.no-power-fold > summary:hover { color: var(--accent); }
-.no-power-fold .table-wrap { margin-top: 6px; }
+/* 无威力的功能/防御/状态技能：直接列在伤害技能下面（不折叠），压暗区分 */
 .calc-skill-table tbody tr.no-power .skill-name { color: var(--text-dim); }
-.calc-skill-table tbody tr.no-power td { opacity: .8; }
+.calc-skill-table tbody tr.no-power td { opacity: .78; }
 .calc-skill-table tbody tr.no-power.cur { opacity: 1; }
 .calc-skill-table tbody tr.no-power.cur td { opacity: 1; }
+/* 两段之间的分隔行 */
+.calc-skill-table tbody tr.cst-sep td {
+  background: var(--bg-soft); color: var(--text-faint); font-size: 11px;
+  padding: 4px 8px; border-top: 1px dashed var(--line); border-bottom: 1px dashed var(--line);
+}
 
 /* ------------------------------------------------------ 术语 */
 .glossary { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
