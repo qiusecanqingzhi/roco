@@ -3276,57 +3276,9 @@ function bindView() {
         render();
       });
     }
-    // 打开 / 关闭某张技能卡片的「技能设置」弹窗
-    for (const btn of document.querySelectorAll('[data-fx-open]')) {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();           // 别触发卡片本身的"设为当前技能"
-        const side = btn.closest('[data-skill-table]')?.dataset.skillTable ?? 'a';
-        STATE.calc.fxOpen ??= {};
-        STATE.calc.fxOpen[side] = STATE.calc.fxOpen[side] === btn.dataset.fxOpen ? null : btn.dataset.fxOpen;
-        render();
-      });
-    }
-    for (const btn of document.querySelectorAll('[data-fx-close]')) {
-      btn.addEventListener('click', () => { STATE.calc.fxOpen = {}; render(); });
-    }
-    // 效果开关（生效 / 不生效）
-    for (const btn of document.querySelectorAll('[data-fx-toggle]')) {
-      btn.addEventListener('click', () => {
-        const k = `on:${btn.dataset.fxToggle}`;
-        STATE.calc.fx ??= {};
-        STATE.calc.fx[k] = STATE.calc.fx[k] ? 0 : 1;
-        render();
-      });
-    }
-    // 二选一：选触发哪一个分支
-    for (const btn of document.querySelectorAll('[data-fx-choice]')) {
-      btn.addEventListener('click', () => {
-        const [k, i] = btn.dataset.fxChoice.split(':');
-        STATE.calc.fx ??= {};
-        STATE.calc.fx[`choice:${k}`] = Number(i) || 0;
-        STATE.calc.fx[`on:${k}`] = 1;      // 选了就等于启用
-        render();
-      });
-    }
-    // 手填显示威力
-    for (const btn of document.querySelectorAll('[data-fx-pow-apply]')) {
-      btn.addEventListener('click', () => {
-        const k = btn.dataset.fxPowApply;
-        const inp = document.querySelector(`[data-fx-pow="${k}"]`);
-        const v = Number(inp?.value);
-        if (!Number.isFinite(v)) return;
-        STATE.calc.fx ??= {};
-        STATE.calc.fx[`pow:${k}`] = Math.max(0, Math.round(v));
-        render();
-      });
-    }
-    for (const btn of document.querySelectorAll('[data-fx-pow-reset]')) {
-      btn.addEventListener('click', () => {
-        STATE.calc.fx ??= {};
-        delete STATE.calc.fx[`pow:${btn.dataset.fxPowReset}`];
-        render();
-      });
-    }
+    // 「技能设置」弹窗相关（打开 / 关闭 / 生效开关 / 二选一 / 手填威力）
+    // 全部走 document 上的**事件委托**（见文件末尾），这里不再逐个绑定 ——
+    // 两处都绑会双触发（打开又立刻关掉），而且逐个绑定一旦被跳过按钮就"点了没反应"。
     // 状态面板：星陨层数（上限 99；与「状态造成的伤害」里那行共用同一份数据）
     for (const el of document.querySelectorAll('[data-st-star]')) {
       el.addEventListener('change', () => {
@@ -3466,6 +3418,62 @@ function debounce(fn, ms = 160) {
 
 // 事件委托
 document.addEventListener('click', (e) => {
+  /**
+   * 技能卡片的「技能设置」相关点击一律走**委托**（不依赖每次 render 后逐个 addEventListener）。
+   * 这样即使某次 render 的绑定被跳过、或者 DOM 被局部替换，按钮也不会"点了没反应"。
+   * 这几个都要在其它委托分支之前处理，并且要挡住卡片本身的"设为当前技能"。
+   */
+  const fxOpenBtn = e.target.closest?.('[data-fx-open]');
+  if (fxOpenBtn) {
+    e.stopPropagation();
+    const side = fxOpenBtn.closest('[data-skill-table]')?.dataset?.skillTable ?? 'a';
+    const id = fxOpenBtn.dataset.fxOpen;
+    STATE.calc.fxOpen ??= {};
+    STATE.calc.fxOpen[side] = STATE.calc.fxOpen[side] === id ? null : id;
+    return render();
+  }
+  if (e.target.closest?.('[data-fx-close]')) {
+    e.stopPropagation();
+    STATE.calc.fxOpen = {};
+    return render();
+  }
+  const fxToggle = e.target.closest?.('[data-fx-toggle]');
+  if (fxToggle) {
+    e.stopPropagation();
+    const k = `on:${fxToggle.dataset.fxToggle}`;
+    STATE.calc.fx ??= {};
+    STATE.calc.fx[k] = STATE.calc.fx[k] ? 0 : 1;
+    return render();
+  }
+  const fxChoice = e.target.closest?.('[data-fx-choice]');
+  if (fxChoice) {
+    e.stopPropagation();
+    const [k, i] = fxChoice.dataset.fxChoice.split(':');
+    STATE.calc.fx ??= {};
+    STATE.calc.fx[`choice:${k}`] = Number(i) || 0;
+    STATE.calc.fx[`on:${k}`] = 1;      // 选了就等于启用
+    return render();
+  }
+  const fxPowApply = e.target.closest?.('[data-fx-pow-apply]');
+  if (fxPowApply) {
+    e.stopPropagation();
+    const k = fxPowApply.dataset.fxPowApply;
+    const inp = document.querySelector(`[data-fx-pow="${k}"]`);
+    const v = Number(inp?.value);
+    if (Number.isFinite(v)) {
+      STATE.calc.fx ??= {};
+      STATE.calc.fx[`pow:${k}`] = Math.max(0, Math.round(v));
+    }
+    return render();
+  }
+  const fxPowReset = e.target.closest?.('[data-fx-pow-reset]');
+  if (fxPowReset) {
+    e.stopPropagation();
+    STATE.calc.fx ??= {};
+    delete STATE.calc.fx[`pow:${fxPowReset.dataset.fxPowReset}`];
+    return render();
+  }
+
   const chipType = e.target.closest('[data-type]');
   if (chipType) {
     const id = Number(chipType.dataset.type);
