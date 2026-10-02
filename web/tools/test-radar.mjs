@@ -871,7 +871,110 @@ console.log('\n· 星陨印记：显示威力 = 层数² + 24 × 层数 − 24')
   api.render();
 }
 
-/* ---------------------------------------------------------- 星陨斩杀线 */
+/* ---------------------------------------------------------- 技能特殊效果 */
+console.log('\n· 技能特殊效果（数值型，进威力计算）');
+{
+  const byName = (n) => A2.data.skills.find((s) => s.name === n);
+  const setFx = (o) => { A2.calc.fx = { ...o }; };
+  const pw = (name, side = 'a') => {
+    const sp = A2.bySpirit.get(side === 'a' ? '20:1' : '43:1');
+    const o = A2.bySpirit.get(side === 'a' ? '43:1' : '20:1');
+    return api.skillPowerOf(side, sp, byName(name), o);
+  };
+
+  // 表本身
+  const n = Object.keys(api.SKILL_EFFECTS ?? {}).length;
+  ok(n >= 35, `效果表有 ${n} 条`);
+  {
+    let miss = 0; let noLabel = 0;
+    for (const id of Object.keys(api.SKILL_EFFECTS ?? {})) {
+      const sk = A2.bySkill.get(Number(id));
+      if (!sk) miss++;
+      const fx = api.skillEffectOf(sk);
+      if (!fx || !fx.label) noLabel++;
+    }
+    ok(miss === 0, `每条都能对应到技能（缺 ${miss}）`);
+    ok(noLabel === 0, `每条都能拿到说明文案（缺 ${noLabel}）`);
+  }
+
+  // 永久叠加
+  {
+    const s = byName('迫近攻击');
+    setFx({});
+    ok(pw('迫近攻击').power === s.dmgMax, `0 层 = 基础威力 ${s.dmgMax}`);
+    setFx({ [s.id]: 3 });
+    ok(pw('迫近攻击').power === s.dmgMax + 135, `3 层 = ${s.dmgMax} + 135（实际 ${pw('迫近攻击').power}）`);
+  }
+  // 条件式
+  {
+    const s = byName('见招拆招');
+    setFx({});
+    ok(pw('见招拆招').power === s.dmgMax, '条件未满足 = 基础威力');
+    setFx({ [s.id]: 1 });
+    ok(pw('见招拆招').power === s.dmgMax + 55, `条件满足 = +55（实际 ${pw('见招拆招').power}）`);
+  }
+  // 按生命损失 + 上限
+  {
+    const s = byName('垂死反击');
+    setFx({ [s.id]: 0 });
+    ok(pw('垂死反击').power === s.dmgMax, '满血 = 基础威力');
+    setFx({ [s.id]: 20 });
+    ok(pw('垂死反击').power === s.dmgMax + 20, `失去 20% = +20（实际 ${pw('垂死反击').power}）`);
+    setFx({ [s.id]: 9000 });
+    ok(pw('垂死反击').power === 500, `超大失去量被上限 500 卡住（实际 ${pw('垂死反击').power}）`);
+  }
+  // 按能耗（自动取技能自身能耗，不需要填状态）
+  {
+    const s = byName('逆袭');
+    setFx({});
+    ok(pw('逆袭').power === s.dmgMax + s.energy * 50,
+      `逆袭：能耗 ${s.energy} → ${s.dmgMax} + ${s.energy * 50} = ${pw('逆袭').power}`);
+  }
+  // 倍数伤害
+  {
+    const s = byName('穿膛');
+    setFx({});
+    ok(pw('穿膛').mult === 1, '穿膛：条件未满足倍率 = 1');
+    setFx({ [s.id]: 1 });
+    ok(pw('穿膛').mult === 5, '穿膛：条件满足倍率 = 5');
+  }
+  // 体重查表（档位 0 是合法值，不能被当成"没填"）
+  {
+    const s = byName('吨位压制');
+    setFx({ [`weight:${s.id}`]: 0 });
+    ok(pw('吨位压制').power === 160, `体重最低档 = 160（实际 ${pw('吨位压制').power}）`);
+    setFx({ [`weight:${s.id}`]: 5 });
+    ok(pw('吨位压制').power === 80, '体重最高档 = 80');
+  }
+  // 界面：结果区出现效果行与输入框，改状态会重算
+  {
+    const s = byName('迫近攻击');
+    A2.calc.a = '20:1'; A2.calc.b = '43:1'; A2.calc.skillA = s.id;
+    A2.calc.hpPctA = 100; A2.calc.hpPctB = 100;
+    setFx({});
+    A2.view = 'calc';
+    ids.get('app').innerHTML = '';
+    api.render();
+    const res = () => ids.get('app')._el.querySelector('.calc-results');
+    ok(/技能效果/.test(res().innerHTML), '结果区出现「技能效果」行');
+    ok(res().querySelectorAll('[data-fx]').length > 0, '给出了对局状态输入框');
+    const inp = res().querySelector('[data-fx]');
+    inp.value = '3';
+    inp.dispatch('change');
+    ok(A2.calc.fx[String(s.id)] === 3, '输入被记住');
+    ok(/\+135/.test(res().innerHTML), '结果区显示出 +135 修正');
+    // 技能表里也标出带特殊效果的技能
+    ok(ids.get('app')._el.querySelectorAll('.calc-skill-table .tag.fx').length > 0,
+      '技能表里标出带特殊效果的技能');
+  }
+  // 还原
+  setFx({});
+  A2.calc.skillA = 7150060;
+  ids.get('app').innerHTML = '';
+  api.render();
+}
+
+/* ---------------------------------------------------------- 斩杀线 */
 console.log('\n· 斩杀线：这一招 + 几层星陨到线（含回合末掉血）');
 {
   const setupK = (picks) => {

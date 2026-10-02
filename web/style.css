@@ -755,6 +755,23 @@ table.lo-table .lo-pct { font-size: 11px; color: var(--text-dim); font-variant-n
   padding: 4px 8px; border-top: 1px dashed var(--line); border-bottom: 1px dashed var(--line);
 }
 
+/* 技能特殊效果：结果块里的修正行与状态输入 */
+.cf.fx-flow b u { text-decoration: none; color: var(--accent); }
+.fx-detail {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  flex-wrap: wrap; margin: 2px 0 8px; padding: 6px 9px;
+  background: var(--bg-soft); border: 1px dashed var(--line); border-radius: 8px;
+}
+.fx-detail > .desc { font-size: 11px; }
+.fx-inputs { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.fx-in { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-faint); }
+.fx-in input { width: 62px; text-align: right; font-variant-numeric: tabular-nums; }
+.fx-cb { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-dim); cursor: pointer; }
+.pill.fx-mult { background: color-mix(in srgb, #d97706 22%, var(--card)); color: var(--text); font-weight: 700; }
+/* 技能表里"有特殊效果"的标记 */
+.tag.fx { color: #0e7490; }
+.calc-skill-table tbody tr.has-fx .skill-name { font-weight: 600; }
+
 /* ------------------------------------------------------ 术语 */
 .glossary { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
 .gitem { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }

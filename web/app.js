@@ -100,6 +100,8 @@ const STATE = {
     modsA: { patkPct: 0, satkPct: 0, pdefPct: 0, sdefPct: 0, spdAdd: 0, powerPct: 0, powerAdd: 0, finalPct: 100 },
     modsB: { patkPct: 0, satkPct: 0, pdefPct: 0, sdefPct: 0, spdAdd: 0, powerPct: 0, powerAdd: 0, finalPct: 100 },
     hpPctA: 100, hpPctB: 100,
+    // 技能特殊效果的"对局状态"：键见 skillPowerOf（叠加层数 / 条件开关 / 能量 / 体重档位…）
+    fx: {},
     // 精灵选择下拉：哪一侧展开着、各自的搜索词
     spOpen: null, spQuery: { a: '', b: '' },
     level: 60,
@@ -1787,6 +1789,267 @@ function statusTurnEndNames(side = 'b') {
     .map((k) => STATE.statusByKey.get(k)?.name ?? k).join('、');
 }
 
+/* ============================================================
+   技能特殊效果（数值型）
+
+   数据来源：技能描述里的数值句式 + 上游的 damage 数组。
+   上游把效果的数值存在 damage 数组里（例：垂死反击 damage=[80,500,5,0]
+   对应"每失去 5% 生命，威力 +5，上限 500"），但**数组槽位的语义没有公开**，
+   而且相同描述的两个技能槽位并不一致 —— 所以这里不做"猜槽位"的解析，
+   改为以描述为准确认语义、以数组为数值校验，落成下面这张显式表。
+   每条的数值都核对过（tools/gen-skill-effects.mjs 会打印校验结果）。
+
+   需要"对局状态"的效果（叠加层数 / 条件是否满足 / 能量 / 权重档位…）
+   由 STATE.calc.fx 提供，界面在计算结果里给出输入框。
+   ============================================================ */
+const SKILL_EFFECTS = {
+  // ── 永久叠加：每次使用 / 每次触发 +per ──────────────────────
+  7020400: { kind: 'stack', per: 45, label: '每次使用后永久 +45' },      // 迫近攻击
+  7040200: { kind: 'stack', per: 20, label: '每次使用后永久 +20' },      // 吹火
+  7020570: { kind: 'stack', per: 90, label: '每应对成功 1 次永久 +90' },  // 能量刃
+  7040210: { kind: 'stack', per: 85, label: '每次击败敌方永久 +85' },    // 流星火雨
+  7030210: { kind: 'stack', per: 60, label: '每次使用其他草系技能后永久 +60' }, // 光能聚集
+  7060120: { kind: 'stack', per: 30, label: '每使用过 1 个其他系别技能永久 +30' }, // 过曝
+  7050300: { kind: 'stack', per: 20, label: '回合结束时永久 +20' },      // 水波术
+  7070020: { kind: 'stack', per: 15, label: '每回合位置变化时永久 +15' }, // 齿轮扭矩
+  7070280: { kind: 'stack', per: 20, label: '每被抵抗 1 次永久 +20' },   // 微型斥候
+  7040250: { kind: 'stack-x2', label: '每用 1 次其他火系技能永久翻倍' }, // 山火
+  // ── 条件式：满足时本次威力 +add ────────────────────────────
+  7020430: { kind: 'cond', add: 55, when: '上回合使用状态技能' },        // 见招拆招
+  7020440: { kind: 'cond', add: 120, when: '能量耗尽' },                // 触底强击
+  7020580: { kind: 'cond', add: 180, when: '上回合应对成功' },           // 气势一击
+  7021210: { kind: 'cond', add: 40, when: '自己有减益' },               // 急中生智
+  7160210: { kind: 'cond', add: 60, when: '自己有减益' },               // 破罐破摔
+  7190420: { kind: 'cond', add: 40, when: '敌方有印记' },               // 星痕
+  7030480: { kind: 'cond', add: 75, when: '自己生命 > 80%' },           // 筛管奔流
+  7021010: { kind: 'cond', add: 100, when: '敌方本回合更换精灵' },       // 当头棒喝
+  7090140: { kind: 'cond', add: 60, when: '敌方有冻结' },               // 极寒领域
+  7090460: { kind: 'cond', add: 50, when: '天气为暴风雪' },             // 雪原狩猎
+  // ── 按生命损失 ────────────────────────────────────────────
+  7020560: { kind: 'hp-loss', per: 5, step: 5, cap: 500, who: 'self', label: '每失去 5% 生命 +5（上限 500）' },  // 垂死反击
+  7021060: { kind: 'hp-loss', per: -10, step: 5, cap: 500, who: 'self', label: '每失去 5% 生命 −10' },           // 彗星
+  7040460: { kind: 'hp-loss', per: -5, step: 5, who: 'def', label: '敌方每失去 5% 生命 −5' },                    // 燃尽
+  // ── 按能量 ────────────────────────────────────────────────
+  7030570: { kind: 'energy-per', per: 10, label: '每有 1 能量 +10' },   // 甜蜜陷阱
+  7090310: { kind: 'energy-per', per: 20, of: '冻结层数', label: '敌方每 1 层冻结 +20' }, // 碎冰冰
+  7020550: { kind: 'energy-all', table: [450000, 700000, 900000, 1100000, 1350000, 1550000, 1650000, 1800000, 1900000, 2000000, 2100000], label: '消耗全部能量查表' }, // 魔能爆
+  // ── 按能耗 ────────────────────────────────────────────────
+  7021150: { kind: 'cost-per', per: 50, dir: '+', label: '本技能能耗每 +1 威力 +50' },  // 逆袭
+  7050390: { kind: 'cost-per', per: 10, dir: '-', label: '本技能能耗每 −1 威力 +10' },  // 涌泉
+  7050480: { kind: 'cost-per', per: 10, dir: '-', label: '本技能能耗每 −1 威力 +10' },  // 叠浪
+  // ── 倍数伤害（不是加威力，是最终乘区） ──────────────────────
+  7020530: { kind: 'mult', n: 5, label: '敌方能量 ≤ 2 时伤害 ×5' },     // 穿膛
+  7170110: { kind: 'mult', n: 20, label: '敌方能量 = 0 时伤害 ×20' },   // 背袭
+  // ── 按敌方技能总能耗 ──────────────────────────────────────
+  7090360: { kind: 'cost-total', per: 10, label: '威力 = 敌方技能总能耗 × 10' }, // 冰锋横扫
+  // ── 按体重查表（表值取自 damage 数组） ────────────────────
+  7020990: { kind: 'weight', table: [160, 140, 120, 100, 90, 80], label: '敌方体重越低威力越高' },  // 吨位压制
+  7021000: { kind: 'weight', table: [80, 90, 100, 120, 140, 160], label: '敌方体重越高威力越高' },  // 以重制重
+  7160150: { kind: 'weight', table: [20, 40, 60, 80, 100, 120], label: '双方体重差越大威力越高' },  // 砂糖弹球
+  // ── 两侧技能威力 ──────────────────────────────────────────
+  7070030: { kind: 'adjacent', div: 3, label: '威力 = 两侧技能威力和 ÷ 3' },      // 钢钻
+  7070200: { kind: 'adjacent-diff', div: 4, label: '威力 += 两侧技能威力差 ÷ 4' }, // 六自由度
+};
+
+/** 某个技能有没有数值型特殊效果 */
+function skillEffectOf(sk) {
+  const fx = sk ? (SKILL_EFFECTS[sk.id] ?? null) : null;
+  if (!fx) return null;
+  // 兜底：万一哪条漏写 label，也按 kind 生成一句，别让界面空着
+  if (!fx.label) fx.label = effectAutoLabel(fx);
+  return fx;
+}
+
+/** 按效果类型生成默认说明（表里没写 label 时用） */
+function effectAutoLabel(fx) {
+  switch (fx.kind) {
+    case 'stack': return `每次触发永久 ${fx.per > 0 ? '+' : ''}${fx.per}`;
+    case 'stack-x2': return '每次触发永久翻倍';
+    case 'cond': return `满足条件时 ${fx.add > 0 ? '+' : ''}${fx.add}`;
+    case 'mult': return `满足条件时伤害 ×${fx.n}`;
+    case 'hp-loss': return `每 ${fx.step}% 生命 ${fx.per > 0 ? '+' : ''}${fx.per}${fx.cap ? `（上限 ${fx.cap}）` : ''}`;
+    case 'energy-per': return `每 1 点 ${fx.of ?? '能量'} +${fx.per}`;
+    case 'energy-all': return '消耗全部能量查表';
+    case 'cost-per': return `能耗每 ${fx.dir}1 威力 +${fx.per}`;
+    case 'cost-total': return `威力 = 敌方技能总能耗 × ${fx.per}`;
+    case 'weight': return '按体重查表取威力';
+    case 'adjacent': return `威力 = 两侧技能威力和 ÷ ${fx.div}`;
+    case 'adjacent-diff': return `威力 += 两侧技能威力差 ÷ ${fx.div}`;
+    default: return '有特殊效果';
+  }
+}
+
+/** 这条效果要不要靠用户填对局状态（要的话界面上给个输入框） */
+function effectNeedsState(fx) {
+  return !!fx && ['stack', 'stack-x2', 'cond', 'hp-loss', 'energy-per', 'energy-all', 'weight', 'adjacent', 'adjacent-diff', 'mult'].includes(fx.kind);
+}
+
+/**
+ * 算出一个技能的**实际基础威力**：把特殊效果套上去。
+ * 返回 { power, base, parts, mult, needState, fx }
+ *   power  = 套完效果的基础威力（可直接喂给 calcDamage 的 opts.power）
+ *   parts  = 每一段修正（用于展示"基础 80 +45 = 125"）
+ *   mult   = 额外伤害倍率（穿膛/背袭那种"造成 N 倍伤害"）
+ */
+function skillPowerOf(side, sp, sk, otherSp) {
+  const base = sk?.dmgMax ?? 0;
+  const fx = skillEffectOf(sk);
+  const st = STATE.calc.fx ?? {};
+  const key = sk ? String(sk.id) : '';
+  if (!fx) {
+    if (typeof window !== 'undefined' && window.__fxProbe) window.__fxProbe(sk, fx);
+    return { power: base, base, parts: [], mult: 1, needState: false, fx: null };
+  }
+
+  const cap = fx.cap ?? Infinity;
+  // 上限要作用在**最终威力**上（垂死反击是"每失去 5% +5，上限 500"），
+  // 所以算完之后统一夹一次，而不是只在每段加法里夹。
+  const clamp = (v) => Math.max(0, v);
+  const fin = (v) => Math.max(0, Math.min(cap, v));
+  const parts = [];
+  let power = base;
+  let needState = false;
+  const num = (k) => Number(st[k] ?? 0) || 0;
+
+  switch (fx.kind) {
+    case 'stack': {
+      const n = num(key);
+      needState = true;
+      const add = n * fx.per;
+      power = clamp(base + add);
+      if (n) parts.push({ label: `${n} 层 × ${fx.per > 0 ? '+' : ''}${fx.per}`, value: add });
+      break;
+    }
+    case 'stack-x2': {
+      const n = num(key);
+      needState = true;
+      power = clamp(base * Math.pow(2, n));
+      if (n) parts.push({ label: `翻倍 ${n} 次`, value: power - base });
+      break;
+    }
+    case 'cond': {
+      const on = num(key) ? 1 : 0;
+      needState = true;
+      if (on) { power = clamp(base + fx.add); parts.push({ label: fx.label, value: fx.add }); }
+      break;
+    }
+    case 'hp-loss': {
+      const k = fx.who === 'def' ? `def:${key}` : key;
+      const lostPct = num(k);
+      needState = true;
+      const steps = Math.floor(lostPct / fx.step);
+      const add = steps * fx.per;
+      if (steps) { power = clamp(base + add); parts.push({ label: `${steps} 档 × ${fx.per > 0 ? '+' : ''}${fx.per}`, value: add }); }
+      break;
+    }
+    case 'energy-per': {
+      const e = num(`energy:${key}`);
+      needState = true;
+      const add = e * fx.per;
+      if (e) { power = clamp(base + add); parts.push({ label: `${e} × +${fx.per}`, value: add }); }
+      break;
+    }
+    case 'energy-all': {
+      const e = num(`energy:${key}`);
+      needState = true;
+      if (e > 0) {
+        power = fx.table[Math.min(fx.table.length - 1, e - 1)] ?? base;
+        parts.push({ label: `消耗 ${e} 能量`, value: power - base });
+      }
+      break;
+    }
+    case 'cost-per': {
+      const e = Number(sk?.energy ?? 0);
+      const d = fx.dir === '+' ? e : -e;
+      const add = Math.max(0, d) * fx.per;
+      if (add) { power = clamp(base + add); parts.push({ label: `能耗 ${sk.energy} × +${fx.per}`, value: add }); }
+      break;
+    }
+    case 'mult': {
+      needState = true;
+      // 倍数伤害在结算时才乘，威力本身不变
+      break;
+    }
+    case 'cost-total': {
+      const total = usableSkillsOf(otherSp).reduce((a, s) => a + (s.energy ?? 0), 0);
+      power = clamp(total * fx.per);
+      parts.push({ label: `敌方总能耗 ${total} × ${fx.per}`, value: power - base });
+      break;
+    }
+    case 'weight': {
+      const k = `weight:${key}`;
+      const has = Object.prototype.hasOwnProperty.call(st, k);
+      const i = num(k);
+      needState = true;
+      // 档位 0 是合法值（最低档），所以要用"填过没有"判断，不能拿 0 当未填
+      if (has) {
+        const v = fx.table[Math.min(fx.table.length - 1, Math.max(0, i))];
+        if (v != null) { power = v; parts.push({ label: `体重档 ${i + 1}/${fx.table.length}`, value: power - base }); }
+      }
+      break;
+    }
+    case 'adjacent': {
+      const l = num(`adj:${key}:l`); const r = num(`adj:${key}:r`);
+      needState = true;
+      const v = clamp(Math.round((l + r) / fx.div));
+      if (v) { power = v; parts.push({ label: `(${l} + ${r}) ÷ ${fx.div}`, value: power - base }); }
+      break;
+    }
+    case 'adjacent-diff': {
+      const l = num(`adj:${key}:l`); const r = num(`adj:${key}:r`);
+      needState = true;
+      const add = Math.round(Math.abs(l - r) / fx.div);
+      if (add) { power = clamp(base + add); parts.push({ label: `|${l} − ${r}| ÷ ${fx.div}`, value: add }); }
+      break;
+    }
+    default: break;
+  }
+  const mult = (fx.kind === 'mult' && num(key)) ? fx.n : 1;
+  return { power: Math.round(fin(power)), base, parts, mult, needState, fx };
+}
+
+/**
+ * 技能特殊效果的输入控件：一条效果需要哪些对局状态，就在这里生成对应输入框。
+ * 状态都存在 STATE.calc.fx 里（键见 skillPowerOf）。
+ */
+function skillEffectInputs(side, sk) {
+  const fx = skillEffectOf(sk);
+  if (!fx || !effectNeedsState(fx)) return '';
+  const key = String(sk.id);
+  const st = STATE.calc.fx ?? {};
+  const v = (k) => st[k] ?? 0;
+  const box = (k, label, attrs = '') => `<label class="fx-in">${esc(label)}
+    <input type="number" min="0" max="999" value="${Number(v(k)) || 0}" data-fx="${k}" ${attrs}></label>`;
+
+  switch (fx.kind) {
+    case 'stack':
+      return box(key, '已叠加', 'title="这个效果已经叠了几层"');
+    case 'stack-x2':
+      return box(key, '已翻倍次数');
+    case 'cond':
+      return `<label class="fx-cb"><input type="checkbox" data-fx="${key}"${Number(v(key)) ? ' checked' : ''}>
+        满足「${esc(fx.when ?? fx.label)}」</label>`;
+    case 'mult':
+      return `<label class="fx-cb"><input type="checkbox" data-fx="${key}"${Number(v(key)) ? ' checked' : ''}>
+        满足「${esc(fx.label)}」</label>`;
+    case 'hp-loss':
+      return fx.who === 'def'
+        ? box(`def:${key}`, '敌方已失去生命 %', 'max="100"')
+        : box(key, '自己已失去生命 %', 'max="100"');
+    case 'energy-per':
+      return box(`energy:${key}`, fx.of ?? '能量');
+    case 'energy-all':
+      return box(`energy:${key}`, '消耗能量', 'max="20"');
+    case 'weight':
+      return box(`weight:${key}`, '体重档位', `max="${fx.table.length - 1}" title="0 = 最低档，${fx.table.length - 1} = 最高档"`);
+    case 'adjacent':
+    case 'adjacent-diff':
+      return box(`adj:${key}:l`, '左侧技能威力') + box(`adj:${key}:r`, '右侧技能威力');
+    default:
+      return '';
+  }
+}
+
 /**
  * 斩杀线那一列的文案：
  *   null -> 不适用
@@ -1958,12 +2221,15 @@ function sideResultBlock(side, sp, otherSp, opts = {}) {
       ${esc(sp.name)} 还没选技能 —— 从下面的技能表里点一行，或在上方下拉框里选一个。</div></div>`;
   }
   const cfg = withCalcSide(side, () => spiritCalcOf(sp));
+  // 技能特殊效果：先把实际基础威力算出来（叠加层数 / 条件 / 能量 / 体重…），再套标准公式
+  const fxPower = skillPowerOf(side, sp, curSkill, otherSp);
   const r = calcDamage(sp, otherSp, curSkill, {
     level: c.level,
     atkIV: cfg.stats[atkKey].iv, atkNature: cfg.stats[atkKey].nature,
     // 对面的"挨打那一项"用对面自己的配置
     defIV: withCalcSide(isA ? 'b' : 'a', () => spiritCalcOf(otherSp).stats[defKey].iv),
     defNature: withCalcSide(isA ? 'b' : 'a', () => spiritCalcOf(otherSp).stats[defKey].nature),
+    power: fxPower.power,
     flatAdd: c.flatAdd, skillPct: c.skillPct,
     atkStage: c.atkStage, defStage: c.defStage,
     powerMul: c.powerMul, finalMul: c.finalMul,
@@ -1972,7 +2238,7 @@ function sideResultBlock(side, sp, otherSp, opts = {}) {
     mods: isA ? c.modsA : c.modsB,
     defMods: isA ? c.modsB : c.modsA,
   });
-  return calcResultBlock(side, sp, otherSp, curSkill, r);
+  return calcResultBlock(side, sp, otherSp, curSkill, r, fxPower);
 }
 
 /** 一侧的面板 + 技能选择。加点用与详情页同一套组件（个体按钮 + 性格逐项开关）
@@ -2028,8 +2294,8 @@ function withCalcSide(side, fn) {
   try { return fn(); } finally { STATE.calcSide = prev; }
 }
 
-/** 计算过程逐步展开 */
-function calcResultBlock(side, atkSp, defSp, sk, r) {
+/** 计算过程逐步展开。fxPower 是 skillPowerOf 的结果（技能特殊效果，可能为 undefined） */
+function calcResultBlock(side, atkSp, defSp, sk, r, fxPower = null) {
   // 克制文案：双克制是 ×3（不是 ×4），双抵抗是 ×¼
   const zone = r.typeEff === 3 ? '×3 双克制'
     : r.typeEff === 2 ? '×2 克制'
@@ -2037,10 +2303,24 @@ function calcResultBlock(side, atkSp, defSp, sk, r) {
         : r.typeEff === 0.5 ? '×½ 抵抗'
           : r.typeEff === 0.25 ? '×¼ 双抵抗' : `×${r.typeEff}`;
   const stabTxt = r.stab > 1 ? '×1.25（本系）' : '×1';
-  const hits = r.dmg <= 0 ? '—' : (Number.isFinite(r.hits) ? `${r.hits} 下` : '—');
+  // 技能特殊效果：有修正时在第①行之前插一段"基础威力 + 修正 = 实际威力"，
+  // 并给需要用户填对局状态的那些效果配输入框
+  const fx = fxPower?.fx ?? null;
+  const fxRow = fx ? `
+    <div class="cf fx-flow"><span>技能效果</span><b>${fxPower.base}
+      ${fxPower.parts.length ? ` ${fxPower.parts.map((p) => `${p.value >= 0 ? '+' : ''}${p.value}`).join(' ')} = <u>${fxPower.power}</u>` : '（当前无修正）'}
+    </b></div>
+    <div class="fx-detail">
+      <span class="desc">${esc(fx.label ?? '')}</span>
+      <div class="fx-inputs">${skillEffectInputs(side, sk)}</div>
+    </div>` : '';
+  const multTxt = fxPower?.mult > 1 ? `<span class="pill fx-mult">伤害 ×${fxPower.mult}</span>` : '';
+  // 倍数伤害（穿膛"造成 5 倍伤害"）作用在最终伤害上
+  const dmgFinal = Math.floor(r.dmg * (fxPower?.mult ?? 1));
   return `
   <div class="calc-result${r.dmg <= 0 ? ' zero' : ''}">
     <div class="calc-flow">
+      ${fxRow}
       <div class="cf"><span>①有效威力</span><b>(${r.basePower} + ${r.flatAdd}) × (1 + ${(r.skillPct * 100).toFixed(0)}%) = ${fmt(r.effective)}</b></div>
       <div class="cf"><span>②显示威力</span><b>round(${fmt(r.effective)} × 本系${r.stab} × 克制${r.typeEff} × 等级${fmt(r.atkZone)}) = ${r.shown}</b></div>
       <div class="cf"><span>③等级系数</span><b>(${r.level} × 45/100 + 10) / 41 = ${r.lvCoef.toFixed(4)}</b></div>
@@ -2052,12 +2332,13 @@ function calcResultBlock(side, atkSp, defSp, sk, r) {
       <span class="pill">${zone}</span>
       <span class="pill">本系 ${stabTxt}</span>
       <span class="pill">${r.atkKey === 'patk' ? '物攻' : '魔攻'} ${r.atkStat} vs ${r.defKey === 'pdef' ? '物防' : '魔防'} ${r.defStat}</span>
+      ${multTxt}
     </div>
     <div class="calc-out">
-      <div class="big"><span>预计伤害</span><b>${r.dmg}</b></div>
+      <div class="big"><span>预计伤害</span><b>${dmgFinal}</b>${fxPower?.mult > 1 ? `<span class="desc">（${r.dmg} × ${fxPower.mult}）</span>` : ''}</div>
       <div class="big"><span>对方血量</span><b>${r.targetHp}</b></div>
-      <div class="big"><span>占比</span><b>${(r.pct * 100).toFixed(1)}%</b></div>
-      <div class="big"><span>需要</span><b>${hits}</b></div>
+      <div class="big"><span>占比</span><b>${((r.targetHp > 0 ? dmgFinal / r.targetHp : 0) * 100).toFixed(1)}%</b></div>
+      <div class="big"><span>需要</span><b>${dmgFinal <= 0 ? '—' : `${Math.ceil(r.targetHp / dmgFinal)} 下`}</b></div>
     </div>
     ${r.isStatus ? '<div class="desc">状态技能不造成伤害（公式里按 0 处理）</div>' : ''}
   </div>`;
@@ -2091,11 +2372,14 @@ function damageSkillTable(side, sp, otherSp) {
   const rows = damage.map((s) => {
     const ak = (s.cat ?? '') === '魔法' ? 'satk' : 'patk';
     const dk = ak === 'satk' ? 'sdef' : 'pdef';
+    // 技能特殊效果先算实际基础威力（叠加层数 / 条件 / 能量…），再套标准公式
+    const fp = skillPowerOf(side, sp, s, otherSp);
     const r = calcDamage(sp, otherSp, s, {
       level: c.level,
       atkIV: cfg.stats[ak].iv, atkNature: cfg.stats[ak].nature,
       defIV: withCalcSide(otherSide, () => spiritCalcOf(otherSp).stats[dk].iv),
       defNature: withCalcSide(otherSide, () => spiritCalcOf(otherSp).stats[dk].nature),
+      power: fp.power,
       flatAdd: c.flatAdd, skillPct: c.skillPct,
       atkStage: c.atkStage, defStage: c.defStage,
       powerMul: c.powerMul, finalMul: c.finalMul,
@@ -2103,32 +2387,34 @@ function damageSkillTable(side, sp, otherSp) {
       mods: side === 'a' ? c.modsA : c.modsB,
       defMods: side === 'a' ? c.modsB : c.modsA,
     });
+    // 倍数伤害最后乘
+    if (fp.mult > 1) r.dmg = Math.floor(r.dmg * fp.mult);
     const killN = wantKill ? starfallKillLayers(sp, otherSp, s, { sendGlobal: true, atkSide: side }) : null;
-    return { s, r, killN };
+    return { s, r, killN, fp };
   }).sort((x, y) => y.r.dmg - x.r.dmg);
 
   const srcTag = (s) => (s.src === 'blood' ? '<span class="tag blood">血脉</span>'
     : s.src === 'legendary' ? '<span class="tag legend">传说</span>'
       : s.src === 'machine' ? '<span class="tag machine">技能石</span>' : '');
 
-  const rowHtml = (s, r, killN, extraCls = '') => `
-    <tr class="clickable${s.id === curId ? ' cur' : ''}${extraCls}" data-calc-pick="${s.id}" data-pick-side="${side}">
+  const rowHtml = (s, r, killN, extraCls, fp) => `
+    <tr class="clickable${s.id === curId ? ' cur' : ''}${extraCls ?? ''}${fp ? ' has-fx' : ''}" data-calc-pick="${s.id}" data-pick-side="${side}">
       <td class="mid">${skillIconTag(s.id)}</td>
-      <td class="skill-name">${esc(s.name)}${srcTag(s)}</td>
+      <td class="skill-name">${esc(s.name)}${srcTag(s)}${fp && fp.fx ? `<span class="tag fx" title="${esc(fp.fx.label ?? '')}">效果</span>` : ''}</td>
       <td class="mid">${s.typeId ? badge(s.typeId) : ''}</td>
-      <td class="num">${powerCell(s)}</td>
-      <td class="num">${r ? `<b>${r.dmg}</b>` : '<span class="desc">0</span>'}</td>
-      <td class="num">${r ? (r.dmg > 0 ? r.hits : '—') : '—'}</td>
+      <td class="num">${powerCell(s)}${fp && fp.power !== fp.base ? `<span class="desc"> → ${fp.power}</span>` : ''}</td>
+      <td class="num">${r ? `<b>${r.dmg}</b>${fp?.mult > 1 ? `<span class="desc"> ×${fp.mult}</span>` : ''}` : '<span class="desc">0</span>'}</td>
+      <td class="num">${r ? (r.dmg > 0 ? Math.ceil(r.targetHp / r.dmg) : '—') : '—'}</td>
       ${wantKill ? `<td class="num lo-kill">${r && r.dmg > 0 ? killLayerCell(killN) : '<span class="desc">—</span>'}</td>` : ''}
     </tr>`;
 
-  const body = rows.map(({ s, r, killN }) => rowHtml(s, r, killN)).join('');
+  const body = rows.map(({ s, r, killN, fp }) => rowHtml(s, r, killN, '', fp)).join('');
   // 无威力的功能 / 防御 / 状态技能：**也直接列出来**（用户要求全列，不再折叠），
   // 排在伤害技能之后、按名字排序（它们没有伤害可比），压暗并标「无威力」
   const noPowerBody = noPower
     .slice()
     .sort((x, y) => x.name.localeCompare(y.name, 'zh'))
-    .map((s) => rowHtml(s, null, null, ' no-power')).join('');
+    .map((s) => rowHtml(s, null, null, ' no-power', null)).join('');
   // 两段之间的分隔行（伤害技能在上、无威力的在下）
   const sep = noPower.length && damage.length
     ? `<tr class="cst-sep"><td colspan="${wantKill ? 7 : 6}">
@@ -2808,6 +3094,15 @@ function bindView() {
       // 松手后再整体重算（让伤害结果跟上），此时拖动已结束，重渲染不影响手感
       el.addEventListener('change', () => { softRerender('calc'); });
     }
+    // 技能特殊效果的"对局状态"输入（叠加层数 / 条件开关 / 能量 / 体重档位…）
+    for (const el of document.querySelectorAll('[data-fx]')) {
+      el.addEventListener('change', () => {
+        const k = el.dataset.fx;
+        STATE.calc.fx ??= {};
+        STATE.calc.fx[k] = el.type === 'checkbox' ? (el.checked ? 1 : 0) : (Number(el.value) || 0);
+        render();
+      });
+    }
     // 状态面板：星陨层数（上限 99；与「状态造成的伤害」里那行共用同一份数据）
     for (const el of document.querySelectorAll('[data-st-star]')) {
       el.addEventListener('change', () => {
@@ -3159,12 +3454,20 @@ $('#themeBtn').addEventListener('click', () => {
     console.log('[roco] 数据就绪', c);
     // 给自动化测试用的只读钩子（浏览器里也可以 console 里手动查）
     window.__roco = {
-      STATE, filterSpirits, filterSkills, spiritSkillsOf, learnersOf, spiritDetail, skillDetail,
-      glossaryDetail, render, index, calcDamage, panelStat, levelCoef, typeEffect, usableSkillsOf,
+      STATE, data: STATE.data,
+      filterSpirits, filterSkills, spiritSkillsOf, learnersOf, spiritDetail, skillDetail,
+      glossaryDetail, render, index, panelStat, levelCoef, typeEffect, usableSkillsOf,
       NATURES, natureByName, panelValue, panelInt, ivOf, defaultNat, stateIcon, withCalcSide, bindNatalBlock,
-      loadoutDamage, skillLoadout, pushLoadout, statCards, topSkillsOf, fillLoadoutWithTop,
-      STATUS_EFFECTS, statusDamageOf, statusModeOf, damageSkillTable, loadoutDamage, usableSkillsOf, spiritSkillsOf, statCards, starfallPower, starfallKillLayers, damageWithPower, layersForPower, killLayerCell, hpMaxOf, hpNowOf, targetHpOf, typeEffect,
-      spiritCalcOf, calcStatsOf, natalBlock, bindNatalBlock, redrawNatalBlock, statBreakdown, natalBoxEl, defaultInvestSet,
+      calcDamage, loadoutDamage, skillLoadout, pushLoadout, statCards, topSkillsOf, fillLoadoutWithTop,
+      // 状态与印记
+      STATUS_EFFECTS, statusDamageOf, statusModeOf, hasTurnEndDamage, statusTurnEndNames,
+      // 星陨与斩杀线
+      starfallPower, starfallKillLayers, triggersStarfall, damageWithPower, layersForPower, killLayerCell,
+      // 技能特殊效果
+      SKILL_EFFECTS, skillPowerOf, skillEffectOf, effectNeedsState, skillEffectInputs, damageSkillTable,
+      // 血量与加点
+      hpMaxOf, hpNowOf, targetHpOf, spiritCalcOf, calcStatsOf, natalBlock, redrawNatalBlock,
+      statBreakdown, natalBoxEl, defaultInvestSet,
     };
   } catch (err) {
     $('#app').innerHTML = `
