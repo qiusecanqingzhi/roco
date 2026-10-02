@@ -1843,17 +1843,18 @@ function starfallKillLayers(atkSp, defSp, sk, opts = {}) {
   // 没挂印记（或这招不触发）时，星陨帮不上忙
   if (!canStarfall) return null;
 
-  // 先按公式估一个够用的层数。估算偏大是常态（威力二次增长 + 取整），
-  // 所以拿到够用的 n 之后必须**往下收敛**找最小。
-  // ⚠ 早先只从估算值往上扫，估算偏大时会返回偏大的层数（估 17、实际 11、却返回 13）—— 已修。
-  const needDmg = Math.max(0, targetHp - turnEnd - baseDmg);
-  let n = Math.max(0, Math.min(99, Math.round(layersForPower(Math.ceil(needDmg * 2 + 24)))));
-  if (lethal(n)) {
-    while (n > 0 && lethal(n - 1)) n--;
-    return n;
+  // 找**最小**的够用层数。
+  // 「到线」对层数是单调的（星陨威力随层数递增，打剩的血只会更少），所以可以二分。
+  // ⚠ 早先的写法是先按公式估一个、再往上扫 —— 估算偏大时会返回偏大的层数
+  //   （估 17、实际 11、却返回 13）。而且它要跑上百次伤害计算，
+  //   技能表里几十个技能一乘就明显卡了。二分只要 6~7 次。
+  if (!lethal(99)) return null;
+  let lo = 0; let hi = 99;   // 已知 lethal(hi)=true、lethal(lo)=false
+  while (lo + 1 < hi) {
+    const mid = (lo + hi) >> 1;
+    if (lethal(mid)) hi = mid; else lo = mid;
   }
-  while (n <= 99 && !lethal(n)) n++;
-  return n <= 99 ? n : null;
+  return hi;
 }
 
 /**
@@ -2063,12 +2064,14 @@ function calcResultBlock(side, atkSp, defSp, sk, r) {
 }
 
 /**
- * 一侧的「可用伤害技能」表：把这一侧**全部能用的伤害技能**按伤害从高到低列出来。
+ * 一侧的「可用技能」表：把这一侧**全部能用的技能**列出来，按伤害从高到低。
  * 数据源与技能下拉框一致（usableSkillsOf），所以升级 / 技能石 / 传说 / 血脉技能都在里面。
  * 点一行就是"把这一招作为本侧的当前技能"（与四技能槽的 data-calc-pick 是同一个动作）。
  *
- * 口径：含全局的固定加威力与本次技能威力% —— 和四技能槽的「总伤害」列一致，
- * 因为这张表就是给"这一招能打多少"做总览的。
+ * 分两段：有威力的伤害技能（主表）+ 无威力的功能/状态技能（默认折叠）。
+ * 无威力的那些也必须能查到 —— 技能下拉框里本来就有它们，表里漏掉会让人以为选错了。
+ *
+ * 口径：含全局的固定加威力与本次技能威力% —— 和四技能槽的「总伤害」列一致。
  */
 function damageSkillTable(side, sp, otherSp) {
   const c = STATE.calc;
@@ -2077,51 +2080,62 @@ function damageSkillTable(side, sp, otherSp) {
   const targetHp = targetHpOf(otherSide, otherSp);
   const curId = side === 'a' ? c.skillA : c.skillB;
   // 斩杀线只在需要时才算（每算一格要跑上百次伤害计算）
-  const wantKill = STATE.calc.statusB.picks.includes('starfall-mark') || hasTurnEndDamage('b')
-    || STATE.calc.statusA.picks.includes('starfall-mark') || hasTurnEndDamage('a');
+  const defSide = side === 'a' ? 'b' : 'a';
+  const defStatus = defSide === 'a' ? STATE.calc.statusA : STATE.calc.statusB;
+  const wantKill = defStatus.picks.includes('starfall-mark') || hasTurnEndDamage(defSide);
 
-  const rows = usableSkillsOf(sp)
-    .filter((s) => (s.dmgMax ?? 0) > 0 && s.cat !== '状态')
-    .map((s) => {
-      const ak = (s.cat ?? '') === '魔法' ? 'satk' : 'patk';
-      const dk = ak === 'satk' ? 'sdef' : 'pdef';
-      const r = calcDamage(sp, otherSp, s, {
-        level: c.level,
-        atkIV: cfg.stats[ak].iv, atkNature: cfg.stats[ak].nature,
-        defIV: withCalcSide(otherSide, () => spiritCalcOf(otherSp).stats[dk].iv),
-        defNature: withCalcSide(otherSide, () => spiritCalcOf(otherSp).stats[dk].nature),
-        flatAdd: c.flatAdd, skillPct: c.skillPct,
-        atkStage: c.atkStage, defStage: c.defStage,
-        powerMul: c.powerMul, finalMul: c.finalMul,
-        targetHp,
-        mods: side === 'a' ? c.modsA : c.modsB,
-        defMods: side === 'a' ? c.modsB : c.modsA,
-      });
-      const killN = wantKill ? starfallKillLayers(sp, otherSp, s, { sendGlobal: true, atkSide: side }) : null;
-      return { s, r, killN };
-    })
-    .sort((x, y) => y.r.dmg - x.r.dmg);
+  const all = usableSkillsOf(sp);
+  const damage = all.filter((s) => (s.dmgMax ?? 0) > 0 && s.cat !== '状态');
+  const noPower = all.filter((s) => !((s.dmgMax ?? 0) > 0 && s.cat !== '状态'));
+
+  const rows = damage.map((s) => {
+    const ak = (s.cat ?? '') === '魔法' ? 'satk' : 'patk';
+    const dk = ak === 'satk' ? 'sdef' : 'pdef';
+    const r = calcDamage(sp, otherSp, s, {
+      level: c.level,
+      atkIV: cfg.stats[ak].iv, atkNature: cfg.stats[ak].nature,
+      defIV: withCalcSide(otherSide, () => spiritCalcOf(otherSp).stats[dk].iv),
+      defNature: withCalcSide(otherSide, () => spiritCalcOf(otherSp).stats[dk].nature),
+      flatAdd: c.flatAdd, skillPct: c.skillPct,
+      atkStage: c.atkStage, defStage: c.defStage,
+      powerMul: c.powerMul, finalMul: c.finalMul,
+      targetHp,
+      mods: side === 'a' ? c.modsA : c.modsB,
+      defMods: side === 'a' ? c.modsB : c.modsA,
+    });
+    const killN = wantKill ? starfallKillLayers(sp, otherSp, s, { sendGlobal: true, atkSide: side }) : null;
+    return { s, r, killN };
+  }).sort((x, y) => y.r.dmg - x.r.dmg);
 
   const srcTag = (s) => (s.src === 'blood' ? '<span class="tag blood">血脉</span>'
     : s.src === 'legendary' ? '<span class="tag legend">传说</span>'
       : s.src === 'machine' ? '<span class="tag machine">技能石</span>' : '');
 
-  const body = rows.map(({ s, r, killN }) => `
-    <tr class="clickable${s.id === curId ? ' cur' : ''}" data-calc-pick="${s.id}" data-pick-side="${side}">
+  const rowHtml = (s, r, killN, extraCls = '') => `
+    <tr class="clickable${s.id === curId ? ' cur' : ''}${extraCls}" data-calc-pick="${s.id}" data-pick-side="${side}">
       <td class="mid">${skillIconTag(s.id)}</td>
       <td class="skill-name">${esc(s.name)}${srcTag(s)}</td>
       <td class="mid">${s.typeId ? badge(s.typeId) : ''}</td>
       <td class="num">${powerCell(s)}</td>
-      <td class="num"><b>${r.dmg}</b></td>
-      <td class="num">${r.dmg > 0 ? r.hits : '—'}</td>
-      ${wantKill ? `<td class="num lo-kill">${killLayerCell(killN)}</td>` : ''}
-    </tr>`).join('');
+      <td class="num">${r ? `<b>${r.dmg}</b>` : '<span class="desc">0</span>'}</td>
+      <td class="num">${r ? (r.dmg > 0 ? r.hits : '—') : '—'}</td>
+      ${wantKill ? `<td class="num lo-kill">${r && r.dmg > 0 ? killLayerCell(killN) : '<span class="desc">—</span>'}</td>` : ''}
+    </tr>`;
 
-  const bloodCount = rows.filter(({ s }) => s.src === 'blood').length;
+  const body = rows.map(({ s, r, killN }) => rowHtml(s, r, killN)).join('');
+  // 无威力的技能：排序时放最后（它们没有伤害可比）
+  const noPowerBody = noPower
+    .slice()
+    .sort((x, y) => x.name.localeCompare(y.name, 'zh'))
+    .map((s) => rowHtml(s, null, null, ' no-power')).join('');
+
+  const bloodCount = damage.filter((x) => x.src === 'blood').length;
+  const bloodNoPower = noPower.filter((x) => x.src === 'blood').length;
+
   return `<div class="calc-skill-table" data-skill-table="${side}">
     <div class="cst-head">
-      <h3>${esc(sp.name)} 的伤害技能 <span class="n">${rows.length} 个</span></h3>
-      <span class="desc">升级 / 技能石 / 传说 / 血脉${bloodCount ? `（含 ${bloodCount} 个血脉技能）` : ''} · 点一行设为这一侧的当前技能</span>
+      <h3>${esc(sp.name)} 的技能 <span class="n">${all.length} 个（伤害 ${damage.length}）</span></h3>
+      <span class="desc">升级 / 技能石 / 传说 / 血脉${bloodCount ? `（伤害技能里含 ${bloodCount} 个血脉）` : ''} · 点一行设为这一侧的当前技能</span>
     </div>
     <div class="table-wrap" style="max-height:520px;overflow:auto"><table>
       <thead><tr>
@@ -2131,6 +2145,18 @@ function damageSkillTable(side, sp, otherSp) {
       </tr></thead>
       <tbody>${body}</tbody>
     </table></div>
+    ${noPower.length ? `
+    <details class="no-power-fold">
+      <summary>还有 ${noPower.length} 个无威力的功能 / 状态技能${bloodNoPower ? `（含 ${bloodNoPower} 个血脉）` : ''}，点了也不会造成伤害</summary>
+      <div class="table-wrap" style="max-height:300px;overflow:auto"><table>
+        <thead><tr>
+          <th class="mid">图标</th><th>技能</th><th class="mid">系别</th><th class="num">威力</th>
+          <th class="num">预计伤害</th><th class="num">需要几下</th>
+          ${wantKill ? '<th class="num">斩杀线</th>' : ''}
+        </tr></thead>
+        <tbody>${noPowerBody}</tbody>
+      </table></div>
+    </details>` : ''}
     ${wantKill ? `<div class="desc" style="margin-top:6px;font-size:12px">
       「斩杀线」= 这一招打完再补多少层星陨到线；回合末掉血是攻击之后才结算的，所以打剩的血量不超过它也算到线。
     </div>` : ''}
@@ -3142,7 +3168,7 @@ $('#themeBtn').addEventListener('click', () => {
       glossaryDetail, render, index, calcDamage, panelStat, levelCoef, typeEffect, usableSkillsOf,
       NATURES, natureByName, panelValue, panelInt, ivOf, defaultNat, stateIcon, withCalcSide, bindNatalBlock,
       loadoutDamage, skillLoadout, pushLoadout, statCards, topSkillsOf, fillLoadoutWithTop,
-      STATUS_EFFECTS, statusDamageOf, statusModeOf, starfallPower, starfallKillLayers, damageWithPower, layersForPower, killLayerCell, hpMaxOf, hpNowOf, targetHpOf, typeEffect,
+      STATUS_EFFECTS, statusDamageOf, statusModeOf, damageSkillTable, loadoutDamage, usableSkillsOf, spiritSkillsOf, statCards, starfallPower, starfallKillLayers, damageWithPower, layersForPower, killLayerCell, hpMaxOf, hpNowOf, targetHpOf, typeEffect,
       spiritCalcOf, calcStatsOf, natalBlock, bindNatalBlock, redrawNatalBlock, statBreakdown, natalBoxEl, defaultInvestSet,
     };
   } catch (err) {

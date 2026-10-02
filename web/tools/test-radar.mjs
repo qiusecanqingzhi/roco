@@ -386,7 +386,7 @@ ok(/data-calc="atkStage"/.test(calcHtml) && /data-calc="defStage"/.test(calcHtml
 ok((calcHtml.match(/data-calc="skill"/g) || []).length === 2, '两侧各有一个技能选择框');
 // 两侧各自的「伤害技能」表（原来只有一个「伤害最高的技能」排序表，现在每侧一张，
 // 且列出的是**全部可用伤害技能**，不是前 12 个）
-ok(/的伤害技能/.test(calcHtml), '有「XX 的伤害技能」表');
+ok(/的技能/.test(calcHtml), '有「XX 的技能」表');
 ok((calcHtml.match(/class="calc-skill-table"/g) || []).length === 2, '两侧各一张伤害技能表');
 const rankRows = (calcHtml.match(/data-calc-pick="/g) || []).length;
 ok(rankRows > 12, `技能表共 ${rankRows} 行（比原来的前 12 个多）`);
@@ -403,10 +403,32 @@ ok(rankRows > 12, `技能表共 ${rankRows} 行（比原来的前 12 个多）`)
       `第 ${i + 1} 张表按伤害降序（${dmg.slice(0, 5).join(' ≥ ')} …）`);
   }
 }
+// 表里必须**完整**列出该精灵的全部可用技能（与技能下拉框同一个数据源）——
+// 早先只列了有威力的，导致无威力的功能/状态技能在下拉框里能选、在表里查不到
+{
+  const spA = A2.bySpirit.get('20:1');
+  const spB = A2.bySpirit.get('43:1');
+  for (const [side, sp] of [['a', spA], ['b', spB]]) {
+    const usable = api.usableSkillsOf(sp);
+    const chunk = calcHtml.split('<div data-skill-table="')[side === 'a' ? 1 : 2] ?? '';
+    const slice = chunk.split('<div data-skill-table="')[0];
+    const rendered = (slice.match(/data-calc-pick="/g) || []).length;
+    ok(rendered === usable.length,
+      `${sp.name}(${side}) 的表列出了全部 ${usable.length} 个可用技能（实际 ${rendered}）`);
+    // 无威力的那些要出现在折叠区里，且被标成 no-power
+    const noPower = usable.filter((s) => !((s.dmgMax ?? 0) > 0 && s.cat !== '状态'));
+    const missing = noPower.filter((s) => !slice.includes(`data-calc-pick="${s.id}"`));
+    ok(missing.length === 0, `${sp.name} 的 ${noPower.length} 个无威力技能都在表里（缺 ${missing.length}）`);
+    ok((slice.match(/class="clickable[^"]*no-power"/g) || []).length === noPower.length,
+      `无威力技能都带 no-power 标记（${noPower.length} 个）`);
+    ok(/<details class="no-power-fold">/.test(slice) && /无威力/.test(slice), '有折叠区且写明是无威力技能');
+  }
+}
+
 // 表里必须有血脉技能（血脉专属技能以前不在表里）
 ok(/class="tag blood"/.test(calcHtml), '技能表里标出了血脉技能');
 ok(/血脉/.test(calcHtml), '表头说明里提到血脉');
-// 具体核对：这一侧的血脉技能 id 必须真的出现在它自己的表里
+// 具体核对：血脉技能 id 必须真的出现在它自己的表里（含无威力那些）
 {
   const spA = A2.bySpirit.get('20:1');
   const blSkills = (A2.data.spiritBloodlines?.[`${spA.id}:${spA.formId}`] ?? [])
