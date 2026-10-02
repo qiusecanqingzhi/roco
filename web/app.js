@@ -2454,8 +2454,6 @@ function damageSkillTable(side, sp, otherSp) {
   const all = usableSkillsOf(sp);
   const damage = all.filter((s) => (s.dmgMax ?? 0) > 0 && s.cat !== '状态');
   const noPower = all.filter((s) => !((s.dmgMax ?? 0) > 0 && s.cat !== '状态'));
-  // 哪张技能卡片打开了「技能设置」弹窗（每侧最多一个）
-  const flag = c.fxOpen?.[side] ?? null;
 
   const rows = damage.map((s) => {
     const ak = (s.cat ?? '') === '魔法' ? 'satk' : 'patk';
@@ -2552,8 +2550,33 @@ function damageSkillTable(side, sp, otherSp) {
       重新打开才会算上效果（二选一的技能点开后先选触发哪一个）。
       ${wantKill ? '「斩杀」= 打完再补这么多层星陨到线。' : ''}
     </div>
-    ${flag ? skillFxDialog(side, sp, otherSp, flag) : ''}
   </div>`;
+}
+
+/**
+ * 打开某个技能的「技能设置」浮层。
+ *
+ * ⚠ 早先这里是**内联**渲染在技能列表末尾的（`${flag ? skillFxDialog(...) : ''}`）——
+ * 每侧几十张卡片，弹窗被塞到列表最底下，用户点了按钮完全看不到东西，
+ * 表现就是"点了打不开"。现在改成复用详情弹窗那套浮层（#modal / #modalBody）。
+ */
+function openSkillFx(side, skillId) {
+  STATE.calc.fxOpen = { side, id: String(skillId) };
+  const sp = STATE.bySpirit.get(STATE.calc[side]);
+  const otherKey = side === 'a' ? STATE.calc.b : STATE.calc.a;
+  const otherSp = STATE.bySpirit.get(otherKey);
+  openModal(skillFxDialog(side, sp, otherSp, skillId));
+}
+
+/** 效果状态变了以后刷新浮层内容（页面本身由 render() 更新） */
+function refreshFxModal() {
+  const f = STATE.calc.fxOpen;
+  if (!f?.id) return;
+  const sp = STATE.bySpirit.get(STATE.calc[f.side]);
+  const otherKey = f.side === 'a' ? STATE.calc.b : STATE.calc.a;
+  const otherSp = STATE.bySpirit.get(otherKey);
+  const body = $('#modalBody');
+  if (body) body.innerHTML = skillFxDialog(f.side, sp, otherSp, f.id);
 }
 
 /**
@@ -2761,8 +2784,73 @@ function openModal(html) {
 function closeModal() {
   $('#modal').hidden = true;
   document.body.style.overflow = '';
+  // 关闭浮层时把「技能设置」的定位也清掉，免得下次打开串到别的技能
+  if (STATE.calc?.fxOpen) STATE.calc.fxOpen = {};
 }
 $('#modal').addEventListener('click', (e) => { if (e.target.closest('[data-close]')) closeModal(); });
+
+/**
+ * 「技能设置」浮层内的交互。
+ * 弹窗内容不走 bindView()，所以在这里做**事件委托**（一次绑定，永久有效）——
+ * 早先逐个 addEventListener 和委托并存，一次点击跑两遍（开了又关），按钮点了没反应。
+ */
+$('#modalBody').addEventListener('click', (e) => {
+  const t = e.target;
+  // × 关闭
+  if (t.closest('[data-fx-close]')) { e.preventDefault(); return closeModal(); }
+  // 生效 / 不生效
+  const toggle = t.closest('[data-fx-toggle]');
+  if (toggle) {
+    const k = `on:${toggle.dataset.fxToggle}`;
+    STATE.calc.fx ??= {};
+    STATE.calc.fx[k] = STATE.calc.fx[k] ? 0 : 1;
+    render();                 // 页面（卡片/计算结果）跟着更新
+    return refreshFxModal();  // 浮层内容也要刷新
+  }
+  // 二选一：选触发哪个分支
+  const choice = t.closest('[data-fx-choice]');
+  if (choice) {
+    const [k, i] = choice.dataset.fxChoice.split(':');
+    STATE.calc.fx ??= {};
+    STATE.calc.fx[`choice:${k}`] = Number(i) || 0;
+    STATE.calc.fx[`on:${k}`] = 1;      // 选了就等于启用
+    render();
+    return refreshFxModal();
+  }
+  // 手填显示威力
+  const apply = t.closest('[data-fx-pow-apply]');
+  if (apply) {
+    const k = apply.dataset.fxPowApply;
+    const inp = $('#modalBody').querySelector(`[data-fx-pow="${k}"]`);
+    const v = Number(inp?.value);
+    if (Number.isFinite(v)) {
+      STATE.calc.fx ??= {};
+      STATE.calc.fx[`pow:${k}`] = Math.max(0, Math.round(v));
+    }
+    render();
+    return refreshFxModal();
+  }
+  const reset = t.closest('[data-fx-pow-reset]');
+  if (reset) {
+    STATE.calc.fx ??= {};
+    delete STATE.calc.fx[`pow:${reset.dataset.fxPowReset}`];
+    render();
+    return refreshFxModal();
+  }
+});
+
+/**
+ * 「技能设置」按钮：走**捕获阶段**，抢在卡片自己的"设为当前技能"之前把它拦下来 ——
+ * 否则点按钮会顺带把这张卡设成当前技能，还会因为那次 render 让弹窗状态错乱。
+ */
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest?.('[data-fx-open]');
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const side = btn.closest('[data-skill-table]')?.dataset?.skillTable ?? 'a';
+  openSkillFx(side, btn.dataset.fxOpen);
+}, true);
 
 /* ---------------------------------------------------------- 六维雷达图
    用固定上限缩放（和横条图一致），所以不同精灵之间可以横向比较形状；
@@ -3417,63 +3505,10 @@ function debounce(fn, ms = 160) {
 }
 
 // 事件委托
+// 注：「技能设置」相关的点击**不在这里** —— 它们分别在：
+//   · 打开按钮  -> document 的**捕获阶段**（抢在卡片"设为当前技能"之前拦下来）
+//   · 弹窗内交互 -> #modalBody 上的委托（见「详情弹窗」一节）
 document.addEventListener('click', (e) => {
-  /**
-   * 技能卡片的「技能设置」相关点击一律走**委托**（不依赖每次 render 后逐个 addEventListener）。
-   * 这样即使某次 render 的绑定被跳过、或者 DOM 被局部替换，按钮也不会"点了没反应"。
-   * 这几个都要在其它委托分支之前处理，并且要挡住卡片本身的"设为当前技能"。
-   */
-  const fxOpenBtn = e.target.closest?.('[data-fx-open]');
-  if (fxOpenBtn) {
-    e.stopPropagation();
-    const side = fxOpenBtn.closest('[data-skill-table]')?.dataset?.skillTable ?? 'a';
-    const id = fxOpenBtn.dataset.fxOpen;
-    STATE.calc.fxOpen ??= {};
-    STATE.calc.fxOpen[side] = STATE.calc.fxOpen[side] === id ? null : id;
-    return render();
-  }
-  if (e.target.closest?.('[data-fx-close]')) {
-    e.stopPropagation();
-    STATE.calc.fxOpen = {};
-    return render();
-  }
-  const fxToggle = e.target.closest?.('[data-fx-toggle]');
-  if (fxToggle) {
-    e.stopPropagation();
-    const k = `on:${fxToggle.dataset.fxToggle}`;
-    STATE.calc.fx ??= {};
-    STATE.calc.fx[k] = STATE.calc.fx[k] ? 0 : 1;
-    return render();
-  }
-  const fxChoice = e.target.closest?.('[data-fx-choice]');
-  if (fxChoice) {
-    e.stopPropagation();
-    const [k, i] = fxChoice.dataset.fxChoice.split(':');
-    STATE.calc.fx ??= {};
-    STATE.calc.fx[`choice:${k}`] = Number(i) || 0;
-    STATE.calc.fx[`on:${k}`] = 1;      // 选了就等于启用
-    return render();
-  }
-  const fxPowApply = e.target.closest?.('[data-fx-pow-apply]');
-  if (fxPowApply) {
-    e.stopPropagation();
-    const k = fxPowApply.dataset.fxPowApply;
-    const inp = document.querySelector(`[data-fx-pow="${k}"]`);
-    const v = Number(inp?.value);
-    if (Number.isFinite(v)) {
-      STATE.calc.fx ??= {};
-      STATE.calc.fx[`pow:${k}`] = Math.max(0, Math.round(v));
-    }
-    return render();
-  }
-  const fxPowReset = e.target.closest?.('[data-fx-pow-reset]');
-  if (fxPowReset) {
-    e.stopPropagation();
-    STATE.calc.fx ??= {};
-    delete STATE.calc.fx[`pow:${fxPowReset.dataset.fxPowReset}`];
-    return render();
-  }
-
   const chipType = e.target.closest('[data-type]');
   if (chipType) {
     const id = Number(chipType.dataset.type);
@@ -3697,7 +3732,7 @@ $('#themeBtn').addEventListener('click', () => {
       starfallPower, starfallKillLayers, triggersStarfall, damageWithPower, layersForPower, killLayerCell,
       // 技能特殊效果
       SKILL_EFFECTS, skillPowerOf, skillEffectOf, effectNeedsState, skillEffectInputs, damageSkillTable,
-      effectHasSwitch, effectIsChoice, effectChoices, effectAutoLabel, skillFxDialog,
+      effectHasSwitch, effectIsChoice, effectChoices, effectAutoLabel, skillFxDialog, openSkillFx, refreshFxModal,
       // 血量与加点
       hpMaxOf, hpNowOf, targetHpOf, spiritCalcOf, calcStatsOf, natalBlock, redrawNatalBlock,
       statBreakdown, natalBoxEl, defaultInvestSet,

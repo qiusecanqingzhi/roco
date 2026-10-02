@@ -329,6 +329,11 @@ export function makeEnv({ withBundle = true, bundle, fetchImpl } = {}) {
     ['main', 'app'], ['div', 'modal'], ['div', 'modalBody'], ['nav', 'tabs'], ['input', 'globalSearch'],
     ['button', 'themeBtn'], ['div', 'toast'], ['span', 'statLine'], ['div', 'searchSuggest'], ['div', 'searchWrap'],
   ]) make(tag, id);
+  // 忠实还原 index.html 的初始状态：这两个元素在真实 HTML 里带 `hidden`，
+  // 桩里漏了会让 `hidden === true` 的断言在测试里永远失败（或更糟：让"弹窗没关"
+  // 这种真问题在测试里看不出来）。踩过。
+  byId.get('modal').hidden = true;
+  byId.get('searchSuggest').hidden = true;
   // app.js 里 openModal 会取 .modal-panel 设 scrollTop，桩里得有这个节点
   const modalPanel = makeNode('div', { class: 'modal-panel' });
   byId.get('modal').children.push(modalPanel);

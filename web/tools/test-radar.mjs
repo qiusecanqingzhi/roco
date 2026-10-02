@@ -999,14 +999,25 @@ console.log('\n· 技能特殊效果（数值型，进威力计算）');
     const card = [...cards()].find((x) => Number(x.dataset.calcPick) === s.id);
     ok(!!card && !!card.querySelector('.btn-fx'), `「${s.name}」有技能设置按钮`);
     card.querySelector('.btn-fx').click();
-    ok(A2.calc.fxOpen.a === String(s.id), '点按钮打开了设置弹窗');
-    ok(!!ids.get('app')._el.querySelector('.fx-modal'), '弹窗渲染出来');
-    ok(/手动开关/.test(ids.get('app')._el.querySelector('.fx-modal').innerHTML), '弹窗标题是「手动开关」');
+    // 设置弹窗是**浮层**（#modal / #modalBody），不是内联在技能列表里 ——
+    // 早先内联渲染在列表末尾，用户点了按钮看不到东西，误以为"打不开"
+    // ⚠ ids 包装器只代理 innerHTML，querySelector / hidden 都得走 _el
+    const mb = () => ids.get('modalBody')._el;
+    const modalEl = () => ids.get('modal')._el;
+    ok(A2.calc.fxOpen.id === String(s.id), `点按钮打开了设置浮层（fxOpen=${JSON.stringify(A2.calc.fxOpen)}）`);
+    ok(modalEl().hidden === false, '浮层 #modal 显示出来');
+    ok(!!mb().querySelector('.fx-modal'), '浮层里渲染出技能设置');
+    ok(!ids.get('app')._el.querySelector('.fx-modal'), '页面里没有内联弹窗（没塞进技能列表）');
+    ok(/手动开关/.test(mb().innerHTML), '弹窗标题是「手动开关」');
     // 打开生效开关 -> 卡片会显示生效状态
-    ids.get('app')._el.querySelector('.fx-modal [data-fx-toggle]').click();
+    mb().querySelector('[data-fx-toggle]').click();
     ok(A2.calc.fx[`on:${s.id}`] === 1, '开关被打开');
+    ok(modalEl().hidden === false, '改了状态浮层还开着');
     const onCard = [...cards()].find((x) => Number(x.dataset.calcPick) === s.id);
     ok(!/未生效/.test(onCard.querySelector('.btn-fx').innerHTML), '卡片上不再标「未生效」');
+    // 关掉浮层
+    mb().querySelector('[data-fx-close]').click();
+    ok(modalEl().hidden === true, '× 能关掉浮层');
     // 普通技能不该有按钮
     ok([...cards()].some((x) => !x.querySelector('.btn-fx')), '普通技能没有技能设置按钮');
   }

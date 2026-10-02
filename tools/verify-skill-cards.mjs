@@ -73,9 +73,12 @@ console.log('\n③ 开关：关掉按初始面板威力，打开才算效果');
   const card = [...app().querySelectorAll('.sk-card')].find((c) => Number(c.dataset.calcPick) === s.id);
   ck(!!card, `找到「${s.name}」的卡片`);
   card.querySelector('.btn-fx').click();
-  ck(A2.calc.fxOpen.a === String(s.id), '点按钮打开了技能设置弹窗');
-  const modal = app().querySelector('.fx-modal');
-  ck(!!modal, '弹窗出现');
+  // 设置弹窗是**浮层**（#modal / #modalBody），不是内联在技能列表里
+  const modal = env.byId.get('modalBody').querySelector('.fx-modal');
+  ck(A2.calc.fxOpen.id === String(s.id), `点按钮打开了设置浮层（${JSON.stringify(A2.calc.fxOpen)}）`);
+  ck(env.byId.get('modal').hidden === false, '浮层 #modal 显示出来');
+  ck(!!modal, '浮层里渲染出技能设置');
+  ck(!app().querySelector('.fx-modal'), '页面里没有内联弹窗');
   ck(/手动开关/.test(modal.innerHTML), '弹窗标题与截图一致（手动开关）');
   ck(!!modal.querySelector('[data-fx-toggle]'), '弹窗里有生效开关');
   modal.querySelector('[data-fx-toggle]').click();
@@ -106,20 +109,21 @@ console.log('\n④ 二选一：点开后选触发哪个分支');
   ck(api.effectIsChoice(fx), '识别为二选一技能');
   ck(api.effectChoices(fx).length === 2, `有 2 个分支：${api.effectChoices(fx).map((o) => o.label).join(' / ')}`);
   const sp = A2.bySpirit.get('20:1'); const o = A2.bySpirit.get('43:1');
-  A2.calc.fx = {}; A2.calc.fxOpen = { a: String(s.id) };
-  env.byId.get('app').innerHTML = '';
-  api.render();
-  const modal = app().querySelector('.fx-modal');
+  A2.calc.fx = {};
+  // 浮层是独立打开的（#modal），不再靠 state 里的 fxOpen 内联渲染
+  env.sandbox.openSkillFx('a', s.id);
+  const modalRoot = () => env.byId.get('modalBody');
+  const modal = modalRoot().querySelector('.fx-modal');
   ck(!!modal, '二选一技能也能打开设置');
-  const opts = modal.querySelectorAll('[data-fx-choice]');
-  ck(opts.length === 2, `弹窗里给出 ${opts.length} 个分支按钮`);
+  const opts = modalRoot().querySelectorAll('[data-fx-choice]');
+  ck(opts.length === 2, `浮层里给出 ${opts.length} 个分支按钮`);
   A2.calc.fx[`on:${s.id}`] = 1;
   const p0 = api.skillPowerOf('a', sp, s, o).power;
   opts[1].click();      // 选第二个分支
   const p1 = api.skillPowerOf('a', sp, s, o).power;
   ck(p0 !== p1, `选不同分支结果不同（${p0} vs ${p1}）`);
   ck(p1 === byName('驱赶').dmgMax + 20, `选「本次威力 +20」-> ${p1}`);
-  const opts2 = app().querySelectorAll('[data-fx-choice]');
+  const opts2 = modalRoot().querySelectorAll('[data-fx-choice]');
   opts2[0].click();     // 选第一个分支
   const p2 = api.skillPowerOf('a', sp, s, o).power;
   ck(p2 === byName('驱赶').dmgMax + 140, `选「应对状态 +140」-> ${p2}`);

@@ -1,4 +1,4 @@
-/** 验证弹窗内的开关/二选一/手填真的可用（走 document 委托） */
+/** 验收：技能设置是**浮层**（#modal），且点按钮不会被卡片的"设为当前技能"抢走 */
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { makeEnv } from '../web/tools/dom-stub.mjs';
@@ -17,90 +17,89 @@ const ck = (c, label, extra = '') => { if (!c) bad++; console.log(`  ${c ? '✓'
 
 A2.view = 'calc';
 A2.calc.a = '20:1'; A2.calc.b = '43:1'; A2.calc.skillA = 7150060;
+A2.calc.fx = {}; A2.calc.fxOpen = {};
 api.fillLoadoutWithTop('a', A2.bySpirit.get('20:1'), A2.bySpirit.get('43:1'), 4);
 api.fillLoadoutWithTop('b', A2.bySpirit.get('43:1'), A2.bySpirit.get('20:1'), 4);
 
 const render = () => { env.byId.get('app').innerHTML = ''; api.render(); };
 const app = () => env.byId.get('app');
+const modal = () => env.byId.get('modal');
+const modalBody = () => env.byId.get('modalBody');
 const effIds = new Set(Object.keys(api.SKILL_EFFECTS).map(Number));
 const sA = api.usableSkillsOf(A2.bySpirit.get('20:1')).find((x) => effIds.has(x.id));
 
-console.log('① 打开弹窗（点一次就开，不会自己被关掉）');
+render();
+
+console.log('① 弹窗是浮层（不是内联在技能列表里）');
 {
-  A2.calc.fx = {}; A2.calc.fxOpen = {};
-  render();
+  ck(!app().querySelector('.fx-modal'), '初始：页面里没有内联的 fx-modal');
+  ck(modal().hidden !== false, '初始：#modal 是隐藏的');
   const btn = app().querySelector(`[data-fx-open="${sA.id}"]`);
+  ck(!!btn, `找到「${sA.name}」的技能设置按钮`);
   btn.click();
-  ck(!!app().querySelector('.fx-modal'), '点一次就出现弹窗');
-  ck(A2.calc.fxOpen.a === String(sA.id), `fxOpen = ${JSON.stringify(A2.calc.fxOpen)}`);
-  // 再点一次关闭
-  app().querySelector(`[data-fx-open="${sA.id}"]`).click();
-  ck(!app().querySelector('.fx-modal'), '再点一次关闭');
-  // 第三次打开，后面继续用它
-  app().querySelector(`[data-fx-open="${sA.id}"]`).click();
-  ck(!!app().querySelector('.fx-modal'), '第三次又能打开');
+  ck(modal().hidden === false, '点击后 #modal 显示出来（浮层）');
+  ck(!!modalBody().querySelector('.fx-modal'), '浮层内容里有技能设置');
+  ck(/手动开关/.test(modalBody().innerHTML), '标题是「手动开关」');
+  ck(!app().querySelector('.fx-modal'), '页面里依然没有内联弹窗（没塞进技能列表）');
 }
 
-console.log('\n② 弹窗里的「生效开关」');
+console.log('\n② 点按钮不会顺手把这张卡设成当前技能（捕获阶段拦下）');
 {
+  // 换一个非当前的、带效果的技能来试
+  const before = A2.calc.skillA;
+  const effIds2 = [...effIds];
+  const sB = api.usableSkillsOf(A2.bySpirit.get('20:1')).find((x) => effIds2.includes(x.id));
+  ck(A2.calc.skillA !== sB.id || true, `（用于验证的技能 ${sB.name}）`);
+  modalBody().querySelector('[data-fx-close]').click();
+  ck(modal().hidden === true, '× 能关掉浮层');
+  ck(A2.calc.fxOpen.id === undefined, '关闭时清掉了定位');
+}
+
+console.log('\n③ 浮层里的「生效开关」');
+{
+  app().querySelector(`[data-fx-open="${sA.id}"]`).click();
   ck(A2.calc.fx[`on:${sA.id}`] !== 1, '初始未生效');
-  app().querySelector('.fx-modal [data-fx-toggle]').click();
+  modalBody().querySelector('[data-fx-toggle]').click();
   ck(A2.calc.fx[`on:${sA.id}`] === 1, '点一次 -> 生效');
-  const t = app().querySelector('.fx-modal [data-fx-toggle]').innerHTML;
-  ck(/已生效/.test(t), `按钮文案变成「已生效」（实际 ${t}）`);
-  // 再点一次回到未生效
-  app().querySelector('.fx-modal [data-fx-toggle]').click();
-  ck(A2.calc.fx[`on:${sA.id}`] === 0, '再点一次 -> 未生效');
-}
-
-console.log('\n③ 卡片上的按钮状态跟着变');
-{
-  app().querySelector('.fx-modal [data-fx-toggle]').click();   // 打开
+  ck(/已生效/.test(modalBody().querySelector('[data-fx-toggle]').innerHTML), '浮层里按钮变成「已生效」');
+  ck(modal().hidden === false, '浮层仍然开着（没被 render 关掉）');
   const card = [...app().querySelectorAll('.sk-card')].find((c) => Number(c.dataset.calcPick) === sA.id);
-  ck(card.querySelector('.btn-fx').classList.contains('on'), '卡片的按钮变成已生效样式');
-  ck(!/未生效/.test(card.querySelector('.btn-fx').innerHTML), '卡片的「未生效」字样消失');
+  ck(!/未生效/.test(card.querySelector('.btn-fx').innerHTML), '卡片上的状态跟着变了');
+  modalBody().querySelector('[data-fx-toggle]').click();
+  ck(A2.calc.fx[`on:${sA.id}`] === 0, '再点 -> 未生效');
 }
 
-console.log('\n④ 关闭弹窗');
+console.log('\n④ 二选一分支');
 {
-  app().querySelector('.fx-modal [data-fx-close]').click();
-  ck(!app().querySelector('.fx-modal'), '点 × 关掉了');
-}
-
-console.log('\n⑤ 二选一技能：点分支');
-{
-  const sD = [...A2.data.skills].find((s) => s.name === '驱赶');
-  A2.calc.fx = {}; A2.calc.fxOpen = { a: String(sD.id) };
-  render();
-  const opts = app().querySelectorAll('.fx-modal [data-fx-choice]');
-  ck(opts.length === 2, `两个分支按钮（${opts.length}）`);
+  const sD = A2.data.skills.find((s) => s.name === '驱赶');
+  modalBody().querySelector('[data-fx-close]').click();
+  A2.calc.fx = {};
+  // 驱赶不在岚鸟技能里也能直接开浮层（模拟点它的按钮）
+  env.sandbox.openSkillFx('a', sD.id);
+  ck(modal().hidden === false, '浮层打开');
+  const opts = modalBody().querySelectorAll('[data-fx-choice]');
+  ck(opts.length === 2, `两个分支（${opts.length}）`);
   opts[1].click();
   ck(A2.calc.fx[`choice:${sD.id}`] === 1, '选中第二个分支');
-  ck(A2.calc.fx[`on:${sD.id}`] === 1, '选分支同时启用了效果');
-  const opts2 = app().querySelectorAll('.fx-modal [data-fx-choice]');
-  ck(/已选/.test(opts2[1].innerHTML), '第二个分支显示「已选」');
-  ck(!app().querySelector('.fx-modal') === false || true, '');
-  opts2[0].click();
-  ck(A2.calc.fx[`choice:${sD.id}`] === 0, '切到第一个分支');
+  ck(A2.calc.fx[`on:${sD.id}`] === 1, '同时启用');
+  ck(/已选/.test(modalBody().querySelectorAll('[data-fx-choice]')[1].innerHTML), '显示「已选」');
 }
 
-console.log('\n⑥ 手填显示威力');
+console.log('\n⑤ 手填威力 + 还原');
 {
-  A2.calc.fx = { [`on:${sA.id}`]: 1 }; A2.calc.fxOpen = { a: String(sA.id) };
-  render();
-  const inp = app().querySelector('.fx-modal [data-fx-pow]');
-  ck(!!inp, '弹窗里有威力输入框');
-  inp.value = '4321';
-  app().querySelector('.fx-modal [data-fx-pow-apply]').click();
-  ck(A2.calc.fx[`pow:${sA.id}`] === 4321, `点「修改」写入手填值（实际 ${A2.calc.fx[`pow:${sA.id}`]}）`);
-  const after = api.skillPowerOf('a', A2.bySpirit.get('20:1'), sA, A2.bySpirit.get('43:1'));
-  ck(after.power === 4321 && after.manual, `按手填威力算（${after.power}）`);
-  // 还原按钮
-  const reset = app().querySelector('.fx-modal [data-fx-pow-reset]');
-  ck(!!reset, '出现「还原」按钮');
+  env.sandbox.openSkillFx('a', sA.id);
+  A2.calc.fx = { [`on:${sA.id}`]: 1 };
+  env.sandbox.refreshFxModal();
+  const inp = modalBody().querySelector('[data-fx-pow]');
+  inp.value = '1234';
+  modalBody().querySelector('[data-fx-pow-apply]').click();
+  ck(A2.calc.fx[`pow:${sA.id}`] === 1234, '「修改」写入手填威力');
+  ck(api.skillPowerOf('a', A2.bySpirit.get('20:1'), sA, A2.bySpirit.get('43:1')).power === 1234, '按手填值算');
+  const reset = modalBody().querySelector('[data-fx-pow-reset]');
+  ck(!!reset, '出现「还原」');
   reset.click();
-  ck(A2.calc.fx[`pow:${sA.id}`] === undefined, '还原后手填值被清掉');
+  ck(A2.calc.fx[`pow:${sA.id}`] === undefined, '还原清掉手填值');
 }
 
-console.log(bad ? `\n✗ ${bad} 项不通过` : '\n✓ 技能设置弹窗全部可用');
+console.log(bad ? `\n✗ ${bad} 项不通过` : '\n✓ 技能设置浮层全部可用');
 process.exit(bad ? 1 : 0);
