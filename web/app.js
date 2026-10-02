@@ -105,7 +105,7 @@ const STATE = {
     level: 60,
     // 与官方说明页算例同参数：(75 + 20) × (1 + 50%) = 142.5 -> 显示威力 356 -> 伤害 332
     flatAdd: 20, skillPct: 0.5, atkStage: 0, defStage: 0,
-    powerMul: 1, finalMul: 1, sortByDamage: true,
+    powerMul: 1, finalMul: 1,
     // 两侧各自的加点配置：Map<"id:form", {stats:{k:{iv,nature}}}>，与详情页那份独立
     cfgA: new Map(), cfgB: new Map(),
   },
@@ -1734,26 +1734,30 @@ function layersForPower(power) {
 /**
  * 某个技能在给定"基础威力"下的实际伤害。
  * 供斩杀线复用与主计算完全同一套参数（等级 / 个体 / 性格 / 乘区 / 状态因子）。
+ * o.atkSide = 出招的是哪一侧（默认 'a'）—— 两侧的加点配置是分开存的，必须对上。
  */
 function damageWithPower(atkSp, defSp, sk, power, o = {}) {
   const c = STATE.calc;
+  const atkSide = o.atkSide ?? 'a';
+  const defSide = atkSide === 'a' ? 'b' : 'a';
   const isPhysical = (sk.cat ?? '') === '物理';
   const atkKey = isPhysical ? 'patk' : 'satk';
   const defKey = isPhysical ? 'pdef' : 'sdef';
   const phantomId = STATE.typeByName.get('幻系')?.id;
   return calcDamage(atkSp, defSp, sk, {
     level: c.level,
-    atkIV: withCalcSide('a', () => spiritCalcOf(atkSp).stats[atkKey].iv),
-    atkNature: withCalcSide('a', () => spiritCalcOf(atkSp).stats[atkKey].nature),
-    defIV: withCalcSide('b', () => spiritCalcOf(defSp).stats[defKey].iv),
-    defNature: withCalcSide('b', () => spiritCalcOf(defSp).stats[defKey].nature),
+    atkIV: withCalcSide(atkSide, () => spiritCalcOf(atkSp).stats[atkKey].iv),
+    atkNature: withCalcSide(atkSide, () => spiritCalcOf(atkSp).stats[atkKey].nature),
+    defIV: withCalcSide(defSide, () => spiritCalcOf(defSp).stats[defKey].iv),
+    defNature: withCalcSide(defSide, () => spiritCalcOf(defSp).stats[defKey].nature),
     power,
     flatAdd: o.sendGlobal ? c.flatAdd : 0,
     skillPct: o.sendGlobal ? c.skillPct : 0,
     atkStage: c.atkStage, defStage: c.defStage,
     powerMul: c.powerMul, finalMul: c.finalMul,
-    targetHp: targetHpOf('b', defSp),
-    mods: c.modsA, defMods: c.modsB,
+    targetHp: targetHpOf(defSide, defSp),
+    mods: atkSide === 'a' ? c.modsA : c.modsB,
+    defMods: atkSide === 'a' ? c.modsB : c.modsA,
     // 星陨那段是幻系（与触发它的技能系别无关），所以覆盖参与计算的系别
     ...(o.phantom && phantomId != null ? { typeOverrideId: phantomId } : {}),
   }).dmg;
@@ -1813,18 +1817,25 @@ function killLayerCell(n) {
  * 把三者直接相加是错的 —— 那等于假设回合末伤害和技能同时结算。
  *
  * 对面没挂星陨印记时，只要回合末伤害够，也能"到线"，此时层数就是 0。
+ *
+ * opts.atkSide  出招的是哪一侧（默认 'a'）；defSide 由它推出。
+ *               两侧的技能表各算各的，所以必须能指定。
+ * opts.sendGlobal 见上。
  */
 function starfallKillLayers(atkSp, defSp, sk, opts = {}) {
   if (!atkSp || !defSp || !sk) return null;
-  const canStarfall = STATE.calc.statusB.picks.includes('starfall-mark') && triggersStarfall(sk);
+  const atkSide = opts.atkSide ?? 'a';
+  const defSide = atkSide === 'a' ? 'b' : 'a';
+  const defStatus = defSide === 'a' ? STATE.calc.statusA : STATE.calc.statusB;
+  const canStarfall = defStatus.picks.includes('starfall-mark') && triggersStarfall(sk);
 
-  const targetHp = targetHpOf('b', defSp);
-  const baseDmg = damageWithPower(atkSp, defSp, sk, sk.dmgMax ?? 0, opts);
+  const targetHp = targetHpOf(defSide, defSp);
+  const baseDmg = damageWithPower(atkSp, defSp, sk, sk.dmgMax ?? 0, { ...opts, atkSide });
   // 没有星陨时，层数恒为 0（at(0) 就是这一招本身）
   const at = (n) => baseDmg + (canStarfall && n > 0
-    ? damageWithPower(atkSp, defSp, sk, starfallPower(n), { ...opts, phantom: true }) : 0);
+    ? damageWithPower(atkSp, defSp, sk, starfallPower(n), { ...opts, atkSide, phantom: true }) : 0);
   // 回合末掉血（不含星陨那段 —— 它不是回合末，已由 at() 负责）
-  const turnEnd = statusDamageOf('b', defSp, { attacker: atkSp, skill: sk })
+  const turnEnd = statusDamageOf(defSide, defSp, { attacker: atkSp, skill: sk })
     .rows.filter((r) => r.mode !== 'power').reduce((a, r) => a + r.raw, 0);
   const remainAfter = (n) => Math.max(0, targetHp - at(n));
   const lethal = (n) => remainAfter(n) <= 0 || remainAfter(n) <= turnEnd;
@@ -1928,6 +1939,41 @@ function statusDamageOf(side, sp, opts = {}) {
   };
 }
 
+/**
+ * 一侧的「计算结果」块（有效威力 → 显示威力 → 等级系数 → 预计伤害）。
+ * 原来挂在每侧六维卡片下面，现在抽出来放到顶部两侧并排 ——
+ * 这样卡片区下面腾出的地方可以放这一侧的技能表。
+ * 没选技能时返回占位文案。
+ */
+function sideResultBlock(side, sp, otherSp, opts = {}) {
+  const c = STATE.calc;
+  const isA = side === 'a';
+  const curSkillId = isA ? c.skillA : c.skillB;
+  const curSkill = curSkillId ? STATE.bySkill.get(curSkillId) : null;
+  const atkKey = opts.atkKey ?? null;
+  const defKey = opts.defKey ?? null;
+  if (!curSkill || !atkKey || !defKey) {
+    return `<div class="calc-result zero"><div class="desc" style="padding:10px 0">
+      ${esc(sp.name)} 还没选技能 —— 从下面的技能表里点一行，或在上方下拉框里选一个。</div></div>`;
+  }
+  const cfg = withCalcSide(side, () => spiritCalcOf(sp));
+  const r = calcDamage(sp, otherSp, curSkill, {
+    level: c.level,
+    atkIV: cfg.stats[atkKey].iv, atkNature: cfg.stats[atkKey].nature,
+    // 对面的"挨打那一项"用对面自己的配置
+    defIV: withCalcSide(isA ? 'b' : 'a', () => spiritCalcOf(otherSp).stats[defKey].iv),
+    defNature: withCalcSide(isA ? 'b' : 'a', () => spiritCalcOf(otherSp).stats[defKey].nature),
+    flatAdd: c.flatAdd, skillPct: c.skillPct,
+    atkStage: c.atkStage, defStage: c.defStage,
+    powerMul: c.powerMul, finalMul: c.finalMul,
+    targetHp: targetHpOf(isA ? 'b' : 'a', otherSp),
+    // 状态面板里的攻击因子：出招这一侧的加成 + 挨打那一侧的防加成
+    mods: isA ? c.modsA : c.modsB,
+    defMods: isA ? c.modsB : c.modsA,
+  });
+  return calcResultBlock(side, sp, otherSp, curSkill, r);
+}
+
 /** 一侧的面板 + 技能选择。加点用与详情页同一套组件（个体按钮 + 性格逐项开关）
  *  opts.atkKey：这一侧出招用的攻击项（没选技能时传 null，就不画攻击高亮）
  *  opts.defKey：这一侧挨打看的防御项（对面没选技能时传 null） */
@@ -1936,41 +1982,14 @@ function calcSide(side, sp, otherSp, opts = {}) {
   const isA = side === 'a';
   const skills = usableSkillsOf(sp);
   const curSkillId = isA ? c.skillA : c.skillB;
-  const curSkill = curSkillId ? STATE.bySkill.get(curSkillId) : null;
-  // 当前血量统一放在下方「状态」面板里调（百分比滑块），这里不再单独放输入框
+
   // 这一侧自己的加点配置（与详情页、与另一侧都独立）
   const cfg = withCalcSide(side, () => spiritCalcOf(sp));
-  // 面板上画的攻/防项由外面算好（要看两侧的技能才知道）
-  const atkKey = opts.atkKey ?? null;
-  const defKey = opts.defKey ?? null;
-  const ivOf1 = (k) => cfg.stats[k].iv;
-  const natOf1 = (k) => cfg.stats[k].nature;
 
   const skillOpts = skills.map((s) => {
     const tag = s.src === 'blood' ? '血脉' : s.src === 'legendary' ? '传说' : s.src === 'machine' ? '技能石' : '';
     return `<option value="${s.id}"${s.id === curSkillId ? ' selected' : ''}>${esc(s.name)}${s.cat ? ` · ${esc(s.cat)}` : ''}${s.dmgMax ? ` · 威力${s.dmgMax}` : ''}${tag ? ` · ${tag}` : ''}</option>`;
   }).join('');
-
-  // 实时结果（这一侧打对面）。atkKey/defKey 都可能为 null（没选技能）——
-  // 此时对面也还没出招，本来就没有"挨打项"可用
-  let result = '';
-  if (curSkill && atkKey && defKey) {
-    const r = calcDamage(sp, otherSp, curSkill, {
-      level: c.level,
-      atkIV: ivOf1(atkKey), atkNature: natOf1(atkKey),
-      // 对面的"挨打那一项"用对面自己的配置
-      defIV: withCalcSide(isA ? 'b' : 'a', () => spiritCalcOf(otherSp).stats[defKey].iv),
-      defNature: withCalcSide(isA ? 'b' : 'a', () => spiritCalcOf(otherSp).stats[defKey].nature),
-      flatAdd: c.flatAdd, skillPct: c.skillPct,
-      atkStage: c.atkStage, defStage: c.defStage,
-      powerMul: c.powerMul, finalMul: c.finalMul,
-      targetHp: targetHpOf(isA ? 'b' : 'a', otherSp),
-      // 状态面板里的攻击因子：出招这一侧的加成 + 挨打那一侧的防加成
-      mods: isA ? c.modsA : c.modsB,
-      defMods: isA ? c.modsB : c.modsA,
-    });
-    result = calcResultBlock(side, sp, otherSp, curSkill, r);
-  }
 
   return `
   <div class="calc-side">
@@ -1998,8 +2017,6 @@ function calcSide(side, sp, otherSp, opts = {}) {
     </div>
 
     ${statCards(sp, cfg, { side })}
-
-    ${result}
   </div>`;
 }
 
@@ -2045,6 +2062,81 @@ function calcResultBlock(side, atkSp, defSp, sk, r) {
   </div>`;
 }
 
+/**
+ * 一侧的「可用伤害技能」表：把这一侧**全部能用的伤害技能**按伤害从高到低列出来。
+ * 数据源与技能下拉框一致（usableSkillsOf），所以升级 / 技能石 / 传说 / 血脉技能都在里面。
+ * 点一行就是"把这一招作为本侧的当前技能"（与四技能槽的 data-calc-pick 是同一个动作）。
+ *
+ * 口径：含全局的固定加威力与本次技能威力% —— 和四技能槽的「总伤害」列一致，
+ * 因为这张表就是给"这一招能打多少"做总览的。
+ */
+function damageSkillTable(side, sp, otherSp) {
+  const c = STATE.calc;
+  const cfg = withCalcSide(side, () => spiritCalcOf(sp));
+  const otherSide = side === 'a' ? 'b' : 'a';
+  const targetHp = targetHpOf(otherSide, otherSp);
+  const curId = side === 'a' ? c.skillA : c.skillB;
+  // 斩杀线只在需要时才算（每算一格要跑上百次伤害计算）
+  const wantKill = STATE.calc.statusB.picks.includes('starfall-mark') || hasTurnEndDamage('b')
+    || STATE.calc.statusA.picks.includes('starfall-mark') || hasTurnEndDamage('a');
+
+  const rows = usableSkillsOf(sp)
+    .filter((s) => (s.dmgMax ?? 0) > 0 && s.cat !== '状态')
+    .map((s) => {
+      const ak = (s.cat ?? '') === '魔法' ? 'satk' : 'patk';
+      const dk = ak === 'satk' ? 'sdef' : 'pdef';
+      const r = calcDamage(sp, otherSp, s, {
+        level: c.level,
+        atkIV: cfg.stats[ak].iv, atkNature: cfg.stats[ak].nature,
+        defIV: withCalcSide(otherSide, () => spiritCalcOf(otherSp).stats[dk].iv),
+        defNature: withCalcSide(otherSide, () => spiritCalcOf(otherSp).stats[dk].nature),
+        flatAdd: c.flatAdd, skillPct: c.skillPct,
+        atkStage: c.atkStage, defStage: c.defStage,
+        powerMul: c.powerMul, finalMul: c.finalMul,
+        targetHp,
+        mods: side === 'a' ? c.modsA : c.modsB,
+        defMods: side === 'a' ? c.modsB : c.modsA,
+      });
+      const killN = wantKill ? starfallKillLayers(sp, otherSp, s, { sendGlobal: true, atkSide: side }) : null;
+      return { s, r, killN };
+    })
+    .sort((x, y) => y.r.dmg - x.r.dmg);
+
+  const srcTag = (s) => (s.src === 'blood' ? '<span class="tag blood">血脉</span>'
+    : s.src === 'legendary' ? '<span class="tag legend">传说</span>'
+      : s.src === 'machine' ? '<span class="tag machine">技能石</span>' : '');
+
+  const body = rows.map(({ s, r, killN }) => `
+    <tr class="clickable${s.id === curId ? ' cur' : ''}" data-calc-pick="${s.id}" data-pick-side="${side}">
+      <td class="mid">${skillIconTag(s.id)}</td>
+      <td class="skill-name">${esc(s.name)}${srcTag(s)}</td>
+      <td class="mid">${s.typeId ? badge(s.typeId) : ''}</td>
+      <td class="num">${powerCell(s)}</td>
+      <td class="num"><b>${r.dmg}</b></td>
+      <td class="num">${r.dmg > 0 ? r.hits : '—'}</td>
+      ${wantKill ? `<td class="num lo-kill">${killLayerCell(killN)}</td>` : ''}
+    </tr>`).join('');
+
+  const bloodCount = rows.filter(({ s }) => s.src === 'blood').length;
+  return `<div class="calc-skill-table" data-skill-table="${side}">
+    <div class="cst-head">
+      <h3>${esc(sp.name)} 的伤害技能 <span class="n">${rows.length} 个</span></h3>
+      <span class="desc">升级 / 技能石 / 传说 / 血脉${bloodCount ? `（含 ${bloodCount} 个血脉技能）` : ''} · 点一行设为这一侧的当前技能</span>
+    </div>
+    <div class="table-wrap" style="max-height:520px;overflow:auto"><table>
+      <thead><tr>
+        <th class="mid">图标</th><th>技能</th><th class="mid">系别</th><th class="num">威力</th>
+        <th class="num">预计伤害</th><th class="num">需要几下</th>
+        ${wantKill ? '<th class="num">斩杀线</th>' : ''}
+      </tr></thead>
+      <tbody>${body}</tbody>
+    </table></div>
+    ${wantKill ? `<div class="desc" style="margin-top:6px;font-size:12px">
+      「斩杀线」= 这一招打完再补多少层星陨到线；回合末掉血是攻击之后才结算的，所以打剩的血量不超过它也算到线。
+    </div>` : ''}
+  </div>`;
+}
+
 function viewCalc() {
   const c = STATE.calc;
   const a = STATE.bySpirit.get(c.a) ?? STATE.data.spirits[0];
@@ -2068,38 +2160,6 @@ function viewCalc() {
   const bDef = defAgainst(aAtk);   // A 出招 -> 打的是 B 的这个防
   const aDef = defAgainst(bAtk);   // B 出招 -> 打的是 A 的这个防
 
-  // 排序模式：把攻击方(a)的全部技能按伤害从高到低排出来（用攻击方自己的加点配置）
-  let rankBlock = '';
-  if (c.sortByDamage) {
-    const list = topSkillsOf('a', a, b, 12);
-    // 斩杀线只在"对面有回合末掉血"或"挂了星陨印记"时才有意义，平时不占这一列
-    const markedRank = STATE.calc.statusB.picks.includes('starfall-mark');
-    const turnEndRank = hasTurnEndDamage('b');
-    const showKillRank = markedRank || turnEndRank;
-    rankBlock = `<div class="section"><h3>${esc(a.name)} 打 ${esc(b.name)}：伤害最高的技能 <span class="n">前 ${list.length}</span></h3>
-      <div class="table-wrap"><table>
-        <thead><tr><th class="mid">图标</th><th>技能</th><th class="num">威力</th><th class="mid">系别</th>
-          <th class="num">显示威力</th><th class="num">预计伤害</th><th class="num">需要几下</th>
-          ${showKillRank ? '<th class="num">斩杀线</th>' : ''}</tr></thead>
-        <tbody>${list.map(({ s, r }) => `
-          <tr class="clickable" data-calc-pick="${s.id}">
-            <td class="mid">${skillIconTag(s.id)}</td>
-            <td class="skill-name">${esc(s.name)}</td>
-            <td class="num">${powerCell(s)}</td>
-            <td class="mid">${s.typeId ? badge(s.typeId) : ''}</td>
-            <td class="num">${r.shown}</td>
-            <td class="num"><b>${r.dmg}</b></td>
-            <td class="num">${r.dmg > 0 ? r.hits : '—'}</td>
-            ${showKillRank ? `<td class="num lo-kill" title="这一招打完（有回合末掉血时再算上它）还要这么多层星陨才到斩杀线">${killLayerCell(starfallKillLayers(a, b, s, { sendGlobal: false }))}</td>` : ''}
-          </tr>`).join('')}</tbody>
-      </table></div>
-      ${showKillRank ? `<div class="desc" style="margin-top:6px;font-size:12px">
-        「斩杀线」= 这一招打完<b>再补多少层星陨</b>到斩杀线。本表用<b>裸威力</b>口径（不含固定加威力与本次技能威力%），
-        所以和上方四技能槽那列可能不同。回合末掉血（${turnEndRank ? statusTurnEndNames() : '无'}）是攻击之后才结算的，
-        所以打完剩余血量只要不超过它也算到线。${markedRank ? '' : '（对面没挂星陨印记，所以只看技能与回合末伤害）'}
-      </div>` : ''}</div>`;
-  }
-
   return `
   <div class="page-head">
     <h1>伤害计算</h1>
@@ -2115,9 +2175,9 @@ function viewCalc() {
       <label>对方防御等级 <input type="number" id="c-defStage" step="0.1" value="${c.defStage}" data-calc="defStage"></label>
       <label>威力乘区 <input type="number" id="c-powerMul" step="0.05" value="${c.powerMul}" data-calc="powerMul"></label>
       <label>最终乘区 <input type="number" id="c-finalMul" step="0.05" value="${c.finalMul}" data-calc="finalMul"></label>
-      <label class="cb"><input type="checkbox" data-calc="sortByDamage"${c.sortByDamage ? ' checked' : ''}> 显示伤害排序</label>
     </div>
 
+    <!-- 两侧的精灵面板并排：选精灵 / 选技能 / 加点 -->
     <div class="calc-two">
       <div class="calc-col">
         <div class="calc-who atk">攻击方 A</div>
@@ -2129,12 +2189,30 @@ function viewCalc() {
       </div>
     </div>
 
+    <!-- 两侧的计算结果并排（原来挂在各自卡片下面，现在提到这里） -->
+    <div class="calc-two calc-results">
+      <div class="calc-col">
+        <div class="calc-who atk">${esc(a.name)} 打 ${esc(b.name)}</div>
+        ${sideResultBlock('a', a, b, { atkKey: aAtk, defKey: bDef })}
+      </div>
+      <div class="calc-col">
+        <div class="calc-who def">${esc(b.name)} 打 ${esc(a.name)}</div>
+        ${sideResultBlock('b', b, a, { atkKey: bAtk, defKey: aDef })}
+      </div>
+    </div>
+
     <div class="calc-loadouts">
       ${skillLoadout('a', a, b)}
       ${skillLoadout('b', b, a)}
     </div>
 
     ${statusPanel(a, b)}
+
+    <!-- 两侧各自的全部可用伤害技能（含血脉技能），并排放在同一行 -->
+    <div class="calc-two calc-skill-tables">
+      <div class="calc-col">${damageSkillTable('a', a, b)}</div>
+      <div class="calc-col">${damageSkillTable('b', b, a)}</div>
+    </div>
 
     <div class="desc" style="margin-top:10px;font-size:12px">
       说明：① 有效威力 = (基础威力 + 固定加威力) × (1 + 本次技能威力%)；
@@ -2143,9 +2221,7 @@ function viewCalc() {
       ④ 预计伤害 = floor(round(攻击 × 显示威力 × 等级系数) ÷ 防御 × 最终乘区)。
       面板值由「种族值 + 个体 + 性格」换算，血量不走这条公式。公式未含连击/减伤等进阶项。
     </div>
-  </div>
-
-  ${rankBlock}`;
+  </div>`;
 }
 
 /* ============================================================
@@ -2573,13 +2649,12 @@ function bindView() {
   // 伤害计算器：改任一项就重算（只重画计算区，不整页刷新）
   const calcEl = $('#app .calc-panel');
   if (calcEl) {
-    const refresh = () => { render(); };
     for (const el of document.querySelectorAll('[data-calc]')) {
       const key = el.dataset.calc;
       if (el.type === 'checkbox') {
         el.addEventListener('change', () => {
           STATE.calc[key] = el.checked;
-          if (key === 'sortByDamage') refresh(); else render();
+          render();
         });
       } else if (el.tagName === 'SELECT') {
         el.addEventListener('change', () => {
@@ -2620,12 +2695,13 @@ function bindView() {
         render();
       });
     }
-    // 伤害排序表里点一行 = 用那个技能（同时放进 A 侧第一个空位）
+    // 两侧的技能表里点一行 = 把那一招设为**这一侧**的当前技能，并放进该侧四技能槽的空位
     for (const tr of document.querySelectorAll('[data-calc-pick]')) {
       tr.addEventListener('click', () => {
         const id = Number(tr.dataset.calcPick);
-        STATE.calc.skillA = id;
-        pushLoadout('a', id);
+        const side = tr.dataset.pickSide === 'b' ? 'b' : 'a';
+        if (side === 'a') STATE.calc.skillA = id; else STATE.calc.skillB = id;
+        pushLoadout(side, id);
         render();
       });
     }

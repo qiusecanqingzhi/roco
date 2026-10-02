@@ -384,17 +384,51 @@ ok(/data-calc="flatAdd"/.test(calcHtml), '固定加威力可调');
 ok(/data-calc="skillPct"/.test(calcHtml), '本次技能威力%可调');
 ok(/data-calc="atkStage"/.test(calcHtml) && /data-calc="defStage"/.test(calcHtml), '攻防等级可调');
 ok((calcHtml.match(/data-calc="skill"/g) || []).length === 2, '两侧各有一个技能选择框');
-// 伤害排序表
-ok(/伤害最高的技能/.test(calcHtml), '有「伤害最高的技能」排序表');
+// 两侧各自的「伤害技能」表（原来只有一个「伤害最高的技能」排序表，现在每侧一张，
+// 且列出的是**全部可用伤害技能**，不是前 12 个）
+ok(/的伤害技能/.test(calcHtml), '有「XX 的伤害技能」表');
+ok((calcHtml.match(/class="calc-skill-table"/g) || []).length === 2, '两侧各一张伤害技能表');
 const rankRows = (calcHtml.match(/data-calc-pick="/g) || []).length;
-ok(rankRows > 0, `排序表有 ${rankRows} 行`);
-// 排序必须是降序
-const rankDmg = [...calcHtml.matchAll(/data-calc-pick="\d+"[\s\S]*?<td class="num"><b>(\d+)<\/b>/g)].map((m) => Number(m[1]));
-ok(rankDmg.length > 1 && rankDmg.every((v, i) => i === 0 || rankDmg[i - 1] >= v),
-  `排序表按伤害降序（${rankDmg.slice(0, 5).join(' ≥ ')} …）`);
-// 岚鸟用扇风打奇丽花：排序表走的是基础参数（无全局加成），所以是 327；加上默认的
-// +20 固定威力 / +50% 后就是参考页的 332（上面已断言）
-ok(rankDmg[0] >= 327, `最高伤害 ≥ 327（实际 ${rankDmg[0]}）`);
+ok(rankRows > 12, `技能表共 ${rankRows} 行（比原来的前 12 个多）`);
+// 每张表内部必须按伤害降序
+{
+  // 用 data-skill-table="a|b" 切分（属性顺序是 data-* 在前，别按 class 找）
+  const parts = calcHtml.split(/<div data-skill-table="/).slice(1);
+  ok(parts.length === 2, `能切出 ${parts.length} 张技能表用于降序检查`);
+  for (const [i, tb] of parts.entries()) {
+    // 只看下一张表之前的这一段，避免跨表
+    const slice = tb.split('<div data-skill-table="')[0];
+    const dmg = [...slice.matchAll(/data-calc-pick="\d+"[\s\S]*?<td class="num"><b>(\d+)<\/b>/g)].map((m) => Number(m[1]));
+    ok(dmg.length > 1 && dmg.every((v, j) => j === 0 || dmg[j - 1] >= v),
+      `第 ${i + 1} 张表按伤害降序（${dmg.slice(0, 5).join(' ≥ ')} …）`);
+  }
+}
+// 表里必须有血脉技能（血脉专属技能以前不在表里）
+ok(/class="tag blood"/.test(calcHtml), '技能表里标出了血脉技能');
+ok(/血脉/.test(calcHtml), '表头说明里提到血脉');
+// 具体核对：这一侧的血脉技能 id 必须真的出现在它自己的表里
+{
+  const spA = A2.bySpirit.get('20:1');
+  const blSkills = (A2.data.spiritBloodlines?.[`${spA.id}:${spA.formId}`] ?? [])
+    .map((x) => x.skillId).filter(Boolean);
+  const tblA = calcHtml.split('<div data-skill-table="')[1] ?? '';
+  const missing = blSkills.filter((id) => !tblA.includes(`data-calc-pick="${id}"`));
+  ok(blSkills.length > 0, `岚鸟有 ${blSkills.length} 个血脉技能`);
+  ok(missing.length === 0, `这些血脉技能都在表里（缺 ${missing.length} 个）`);
+  // 且都带血脉标签（逐行切分来判断，跨行正则容易写坏）
+  const rowsOf = (chunk) => chunk.split('<tr ').slice(1);
+  const rowOfSkill = (chunk, id) => rowsOf(chunk).find((r) => r.includes(`data-calc-pick="${id}"`)) ?? '';
+  const tagged = blSkills.filter((id) => rowOfSkill(tblA, id).includes('tag blood'));
+  ok(tagged.length === blSkills.length, `血脉技能都带「血脉」标签（${tagged.length}/${blSkills.length}）`);
+  // 非血脉技能不该被误标
+  const lvlSkill = (A2.data.spiritSkills[`${spA.id}:${spA.formId}`] ?? [])
+    .filter((x) => x.src === 'level')
+    .map((x) => x.id)
+    .find((id) => rowOfSkill(tblA, id));
+  if (lvlSkill) {
+    ok(!rowOfSkill(tblA, lvlSkill).includes('tag blood'), '升级学会的技能不会被误标成血脉');
+  }
+}
 
 // 两侧的六维卡片区：3×2 卡片（大字面板值 + 小字种族值 + 个体按钮 + 性格开关）
 {
@@ -938,7 +972,9 @@ console.log('\n· 斩杀线：这一招 + 几层星陨到线（含回合末掉�
     const lo = [...killCols('.lo-table .lo-kill')];
     ok(lo.length === 8, `两侧四技能槽各 4 行斩杀列（共 ${lo.length}）`);
     ok(lo.every((c) => /层|—|不需要/.test(c.innerHTML)), '四技能槽的斩杀格都有内容');
-    ok(killCols('.section .lo-kill').length > 0, '排序表也有斩杀列');
+    // 两侧的技能表也该有斩杀列
+    const st = [...killCols('.calc-skill-table .lo-kill')];
+    ok(st.length > 12, `两侧技能表也有斩杀列（共 ${st.length} 格）`);
   }
   // 还原
   setupK([]);

@@ -716,6 +716,34 @@ table.lo-table .lo-pct { font-size: 11px; color: var(--text-dim); font-variant-n
 .lo-kill b { font-size: 14px; color: var(--accent); }
 .lo-kill .desc { font-size: 11px; }
 
+/* 两侧并排的结果区（原来挂在各自卡片下面，现在提到卡片区之后） */
+.calc-results .calc-col > .calc-result { margin-top: 0; }
+.calc-results .calc-who { margin-bottom: 8px; }
+
+/* 每一侧自己的「伤害技能」表 */
+.calc-skill-tables { align-items: start; }
+.calc-skill-table {
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 12px 14px;
+}
+.cst-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.cst-head h3 { margin: 0; font-size: 15px; }
+.cst-head .n { color: var(--text-faint); font-size: 12px; font-weight: 400; }
+.cst-head .desc { font-size: 12px; }
+.calc-skill-table table { width: 100%; font-size: 13px; }
+.calc-skill-table thead th { position: sticky; top: 0; background: var(--card); z-index: 1; }
+.calc-skill-table tbody tr.cur { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.calc-skill-table tbody tr.cur .skill-name { font-weight: 700; }
+/* 技能来源小标签（血脉 / 传说 / 技能石） */
+.tag {
+  display: inline-block; margin-left: 5px; padding: 0 5px; border-radius: 4px;
+  font-size: 10px; line-height: 15px; vertical-align: 1px;
+  border: 1px solid currentColor; opacity: .85;
+}
+.tag.blood { color: #b8860b; }
+.tag.legend { color: #7c5cbf; }
+.tag.machine { color: var(--text-faint); }
+
 /* ------------------------------------------------------ 术语 */
 .glossary { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
 .gitem { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
