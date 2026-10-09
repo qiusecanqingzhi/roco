@@ -698,15 +698,15 @@ console.log('\n· 状态面板');
   const appS = () => ids.get('app')._el;
   ok(!!appS().querySelector('.calc-status'), '伤害计算页有「状态」区块');
   ok(appS().querySelectorAll('.st-side').length === 2, '状态区块分两侧');
-  ok(appS().querySelectorAll('[data-st-mod]').length === 16, `两侧各 8 个攻击因子（共 16，实际 ${appS().querySelectorAll('[data-st-mod]').length}）`);
-  // 因子的类别与顺序要跟参考图一致
+  ok(appS().querySelectorAll('[data-st-mod]').length === 18, `两侧各 9 个攻防因子（共 18，实际 ${appS().querySelectorAll('[data-st-mod]').length}）`);
+  // 因子的类别与顺序要跟参考图一致（「减伤」是按官方口径后加的：进预计伤害层）
   {
     const labels = [...appS().querySelectorAll('.st-side[data-st-side="a"] .st-mod')]
       .map((m) => m.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
-    for (const want of ['物攻', '魔攻', '物防', '魔防', '速度', '技能威力']) {
-      ok(labels.some((l) => l.includes(want)), `攻击因子里有「${want}」`);
+    for (const want of ['物攻', '魔攻', '物防', '魔防', '速度', '技能威力', '减伤']) {
+      ok(labels.some((l) => l.includes(want)), `攻防因子里有「${want}」`);
     }
-    ok(labels.length === 8, `我方恰好 8 个因子（实际 ${labels.length}）`);
+    ok(labels.length === 9, `我方恰好 9 个因子（实际 ${labels.length}）`);
   }
   ok(appS().querySelectorAll('[data-st-hp]').length === 2, '两侧各一条血量滑块');
   ok(appS().querySelectorAll('[data-st-star]').length === 2, '两侧各一个星陨层数');
@@ -761,7 +761,12 @@ console.log('\n· 状态面板');
   });
   ok(defUp.dmg < base.dmg, `物防+100% 让物理技能伤害减半（${base.dmg} -> ${defUp.dmg}）`);
   ok(defCross.dmg === base.dmg, '魔防+100% 不影响物理技能（物防/魔防各走各的）');
-  ok(defUp.defStat === base.defStat * 2, `物防+100% 后防御值翻倍（${base.defStat} -> ${defUp.defStat}）`);
+  // ⚠ 官方口径：防御提升进的是**攻防等级的分母**，不再乘到防御面板上。
+  // 所以 defStat 不变，变的是 lvZone（物防+100% ⇒ 1/(1+1) = ×0.5）。
+  ok(defUp.defStat === base.defStat,
+    `物防+100% 时防御面板不变（${base.defStat}）—— 它进的是攻防等级`);
+  ok(Math.abs(defUp.lvZone - 0.5) < 1e-9, `物防+100% ⇒ 攻防等级 ×0.5（实际 ×${defUp.lvZone}）`);
+  ok(Math.abs(defUp.dmg / base.dmg - 0.5) < 0.01, `伤害随之减半（${base.dmg} -> ${defUp.dmg}）`);
 
   // 血量滑块
   const hp = appS().querySelector('[data-st-hp="a"]');

@@ -97,8 +97,8 @@ const STATE = {
     statusPctA: {}, statusPctB: {},
     // 攻击因子：攻方四项（物攻/魔攻/速度/技能威力）与守方两项（物防/魔防）
     // 会真正进入伤害计算，见 calcDamage 的 mods 与 defMods
-    modsA: { patkPct: 0, satkPct: 0, pdefPct: 0, sdefPct: 0, spdAdd: 0, powerPct: 0, powerAdd: 0, finalPct: 100 },
-    modsB: { patkPct: 0, satkPct: 0, pdefPct: 0, sdefPct: 0, spdAdd: 0, powerPct: 0, powerAdd: 0, finalPct: 100 },
+    modsA: { patkPct: 0, satkPct: 0, pdefPct: 0, sdefPct: 0, spdAdd: 0, powerPct: 0, powerAdd: 0, finalPct: 100, dmgCutPct: 0 },
+    modsB: { patkPct: 0, satkPct: 0, pdefPct: 0, sdefPct: 0, spdAdd: 0, powerPct: 0, powerAdd: 0, finalPct: 100, dmgCutPct: 0 },
     hpPctA: 100, hpPctB: 100,
     // 技能特殊效果的"对局状态"：键见 skillPowerOf（叠加层数 / 条件开关 / 能量 / 体重档位…）
     fx: {},
@@ -1014,17 +1014,30 @@ function calcDamage(atkSp, defSp, sk, opts = {}) {
   // 基础威力：opts.power 允许覆盖（四技能槽里可以把某一招的威力改成别的值，
   // 比如把固定伤害技按实际威力填）。不传就用技能自身的基础威力 damage[0]。
   const basePower = opts.power ?? sk?.dmgMax ?? 0;
-  // 面板值先算出来，再叠状态里的"物攻%/魔攻%"加成（只影响参与计算的那一项）
-  const rawAtkStat = panelOf(atkSp, atkKey, atkIV, atkNature);
-  const modAtkPct = mods ? (atkKey === 'patk' ? (mods.patkPct ?? 0) : (mods.satkPct ?? 0)) : 0;
-  const atkStat = Math.round(rawAtkStat * (1 + modAtkPct / 100));
-  // 防御侧：物防/魔防的百分比加成（只影响参与计算的那一项）
-  const rawDefStat = panelOf(defSp, defKey, defIV, defNature);
-  const modDefPct = defMods ? (defKey === 'pdef' ? (defMods.pdefPct ?? 0) : (defMods.sdefPct ?? 0)) : 0;
-  const defStat = Math.max(1, Math.round(rawDefStat * (1 + modDefPct / 100)));
+  // 面板值：直接取面板，**不把「物攻%」乘进面板** ——
+  // 按官方口径，物攻/魔攻的升降进的是「攻防等级」，不是面板（见下面 lvZone）。
+  const atkStat = panelOf(atkSp, atkKey, atkIV, atkNature);
+  const defStat = Math.max(1, panelOf(defSp, defKey, defIV, defNature));
 
-  // 攻防等级：攻击提升和防御下降都在分子，攻击下降和防御提升都在分母
-  const atkZone = ((1 + atkStage) / (1 + defStage)) || 1;
+  /**
+   * 攻防等级（官方口径）：
+   *   分子 = 1 + 攻击提升 + 对方防御下降
+   *   分母 = 1 + 攻击下降 + 对方防御提升
+   * 同一项用**符号**表达升降：+100 = 提升 100%，−40 = 下降 40%。
+   *   官方示例：攻击 +100%、对方防御 −40% ⇒ (1 + 1 + 0.4) / 1 = ×2.4
+   *
+   * ⚠ 早先我们是把这两个百分比**乘到面板**上的：
+   *     物攻+100% ⇒ 攻击 ×2（结果同）；对方物防−40% ⇒ 防御 ×0.6 ⇒ 相当于 ×1.667
+   *   和官方口径（×1.4）差很多。改成分子/分母相加才是对的。
+   */
+  const atkPct = mods ? (atkKey === 'patk' ? (mods.patkPct ?? 0) : (mods.satkPct ?? 0)) : 0;
+  const defPct = defMods ? (defKey === 'pdef' ? (defMods.pdefPct ?? 0) : (defMods.sdefPct ?? 0)) : 0;
+  const lvNum = 1 + Math.max(0, atkPct) / 100 + Math.max(0, -defPct) / 100;
+  const lvDen = 1 + Math.max(0, -atkPct) / 100 + Math.max(0, defPct) / 100;
+  const lvZone = (lvNum / lvDen) || 1;
+  // 另外还保留了「攻击等级 / 对方防御等级」两个手填乘区（给不想拆词条的人用），叠在攻防等级之外
+  const stageZone = ((1 + atkStage) / (1 + defStage)) || 1;
+  const atkZone = stageZone * lvZone;
 
   // 技能威力：先加固定值，再按百分比放大；状态里的"技能威力"两项就作用在这里
   const modPowerAdd = mods?.powerAdd ?? 0;
@@ -1042,16 +1055,22 @@ function calcDamage(atkSp, defSp, sk, opts = {}) {
   const inner = Math.round(atkStat * shown * lvCoef);
   // 独立乘区：状态里给的是百分数（100 = 不变），换算成倍率
   const modFinal = mods ? (mods.finalPct ?? 100) / 100 : 1;
-  const dmg = isStatus ? 0 : Math.floor((inner / defStat) * finalMul * modFinal * random);
+  // 减伤：挨打那一侧开了防御类技能时的减免（官方：减伤进「预计伤害」层，不回写显示威力）。
+  // 存在**挨打那一侧的 mods** 里，所以 A 打 B 时自动读的是 modsB。
+  const dmgCutPct = Math.max(0, Math.min(100, opts.dmgCutPct ?? defMods?.dmgCutPct ?? 0));
+  const cutFactor = 1 - dmgCutPct / 100;
+  const rawDmg = isStatus ? 0 : Math.floor((inner / defStat) * finalMul * modFinal * random);
+  const dmg = Math.floor(rawDmg * cutFactor);
 
   const targetHp = opts.targetHp ?? defSp.stats.hp;
   const hits = dmg > 0 ? Math.ceil(targetHp / dmg) : Infinity;
 
   return {
     basePower, flatAdd, skillPct, effective, atkStat, defStat, atkKey, defKey, isPhysical, isStatus,
-    dmgTypeId, stab, typeEff, atkZone, powerMul, shown, lvCoef, level, inner, finalMul, random, dmg,
+    dmgTypeId, stab, typeEff, atkZone, stageZone, lvZone, lvNum, lvDen, powerMul, shown,
+    lvCoef, level, inner, finalMul, random, dmg, rawDmg, dmgCutPct, cutFactor,
     targetHp, hits, pct: targetHp > 0 ? dmg / targetHp : 0,
-    modAtkPct, modPowerAdd, modPowerPct, modFinal, modDefPct,
+    modAtkPct: atkPct, modDefPct: defPct, modPowerAdd, modPowerPct, modFinal,
   };
 }
 
@@ -1429,6 +1448,7 @@ function sideStatusPanel(side, sp, otherSp = null) {
     ['spdAdd', '速度', '+'],
     ['powerAdd', '技能威力', '+'], ['powerPct', '技能威力', '%'],
     ['finalPct', '独立乘区', '%'],
+    ['dmgCutPct', '减伤', '%'],
   ];
   const modHtml = MOD_FIELDS.map(([key, label, unit]) => {
     const v = mods[key] ?? (key === 'finalPct' ? 100 : 0);
@@ -1848,6 +1868,16 @@ const SKILL_EFFECTS = {
   7020990: { kind: 'weight', table: [160, 140, 120, 100, 90, 80], label: '敌方体重越低威力越高' },  // 吨位压制
   7021000: { kind: 'weight', table: [80, 90, 100, 120, 140, 160], label: '敌方体重越高威力越高' },  // 以重制重
   7160150: { kind: 'weight', table: [20, 40, 60, 80, 100, 120], label: '双方体重差越大威力越高' },  // 砂糖弹球
+  /**
+   * 按"比值"查表：闪击 / 鸣沙陷阱。
+   * 描述只说"速度比敌方越高，本次技能威力越高"，具体档位在 damage 数组里：
+   *   闪击     [60, 6, 0, 20,40,60,80,90,100,110,120,130,140]
+   *   鸣沙陷阱 [60, 4, 0, 20,40,60,80,90,100,110,120,130,140]
+   * 结构是 [基础威力, 除数, 0, 档位表…] —— 那个 6 / 4 就是"比值 ÷ 除数 = 档位下标"。
+   * 所以让用户**直接填比值**，我们自己算档位（比让人数档位准）。
+   */
+  7150250: { kind: 'ratio-table', divisor: 6, table: [20, 40, 60, 80, 90, 100, 110, 120, 130, 140], label: '速度比敌方越高威力越高（比值 ÷ 6 取档）' }, // 闪击
+  7080320: { kind: 'ratio-table', divisor: 4, table: [20, 40, 60, 80, 90, 100, 110, 120, 130, 140], label: '物防比敌方越高威力越高（比值 ÷ 4 取档）' }, // 鸣沙陷阱
   // ── 两侧技能威力 ──────────────────────────────────────────
   7070030: { kind: 'adjacent', div: 3, label: '威力 = 两侧技能威力和 ÷ 3' },      // 钢钻
   7070200: { kind: 'adjacent-diff', div: 4, label: '威力 += 两侧技能威力差 ÷ 4' }, // 六自由度
@@ -1895,6 +1925,7 @@ function effectAutoLabel(fx) {
     case 'cost-per': return `能耗每 ${fx.dir}1 威力 +${fx.per}`;
     case 'cost-total': return `威力 = 敌方技能总能耗 × ${fx.per}`;
     case 'weight': return '按体重查表取威力';
+    case 'ratio-table': return `按比值查表取威力（÷${fx.divisor}）`;
     case 'adjacent': return `威力 = 两侧技能威力和 ÷ ${fx.div}`;
     case 'adjacent-diff': return `威力 += 两侧技能威力差 ÷ ${fx.div}`;
     case 'choice': return (fx.options ?? []).map((o) => o.label).join(' / ');
@@ -1926,7 +1957,7 @@ function effectChoices(fx) {
 
 /** 这条效果需不需要靠用户填数值状态（要的话界面给输入框） */
 function effectNeedsState(fx) {
-  return !!fx && ['stack', 'stack-x2', 'hp-loss', 'energy-per', 'energy-all', 'weight', 'adjacent', 'adjacent-diff'].includes(fx.kind);
+  return !!fx && ['stack', 'stack-x2', 'hp-loss', 'energy-per', 'energy-all', 'weight', 'ratio-table', 'adjacent', 'adjacent-diff'].includes(fx.kind);
 }
 
 /**
@@ -2074,6 +2105,22 @@ function skillPowerOf(side, sp, sk, otherSp) {
       }
       break;
     }
+    case 'ratio-table': {
+      // 闪击 / 鸣沙陷阱：用户填"比值"，除数是 damage 数组里那个数
+      const k = `ratio:${key}`;
+      const has = Object.prototype.hasOwnProperty.call(st, k);
+      const ratio = num(k);
+      needState = true;
+      if (has) {
+        const idx = Math.min(fx.table.length - 1, Math.max(0, Math.floor(ratio / fx.divisor)));
+        const v = fx.table[idx];
+        if (v != null) {
+          power = v;
+          parts.push({ label: `比值 ${ratio} ÷ ${fx.divisor} = 第 ${idx + 1} 档`, value: power - base });
+        }
+      }
+      break;
+    }
     case 'adjacent': {
       const l = num(`adj:${key}:l`); const r = num(`adj:${key}:r`);
       needState = true;
@@ -2128,6 +2175,8 @@ function skillEffectInputs(side, sk) {
       return box(`energy:${key}`, '消耗能量', 'max="20"');
     case 'weight':
       return box(`weight:${key}`, '体重档位', `max="${fx.table.length - 1}" title="0 = 最低档，${fx.table.length - 1} = 最高档"`);
+    case 'ratio-table':
+      return box(`ratio:${key}`, '比值（面板数值之比）', `title="填你自己的这项面板 ÷ 对方的这项面板；系统会按 ÷ ${fx.divisor} 取档"`);
     case 'adjacent':
     case 'adjacent-diff':
       return box(`adj:${key}:l`, '左侧技能威力') + box(`adj:${key}:r`, '右侧技能威力');
@@ -3409,8 +3458,8 @@ function bindView() {
       STATE.calc.statusA = { picks: [], star: 0, layers: {} };
       STATE.calc.statusB = { picks: [], star: 0, layers: {} };
       STATE.calc.statusPctA = {}; STATE.calc.statusPctB = {};
-      STATE.calc.modsA = { patkPct: 0, satkPct: 0, pdefPct: 0, sdefPct: 0, spdAdd: 0, powerPct: 0, powerAdd: 0, finalPct: 100 };
-      STATE.calc.modsB = { patkPct: 0, satkPct: 0, pdefPct: 0, sdefPct: 0, spdAdd: 0, powerPct: 0, powerAdd: 0, finalPct: 100 };
+      STATE.calc.modsA = { patkPct: 0, satkPct: 0, pdefPct: 0, sdefPct: 0, spdAdd: 0, powerPct: 0, powerAdd: 0, finalPct: 100, dmgCutPct: 0 };
+      STATE.calc.modsB = { patkPct: 0, satkPct: 0, pdefPct: 0, sdefPct: 0, spdAdd: 0, powerPct: 0, powerAdd: 0, finalPct: 100, dmgCutPct: 0 };
       STATE.calc.hpPctA = 100; STATE.calc.hpPctB = 100;
       render();
     });
