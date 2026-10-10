@@ -1881,6 +1881,23 @@ const SKILL_EFFECTS = {
   // ── 两侧技能威力 ──────────────────────────────────────────
   7070030: { kind: 'adjacent', div: 3, label: '威力 = 两侧技能威力和 ÷ 3' },      // 钢钻
   7070200: { kind: 'adjacent-diff', div: 4, label: '威力 += 两侧技能威力差 ÷ 4' }, // 六自由度
+  /**
+   * 补齐"变威力技能"审计里缺的那几个（tools/audit-coverage.mjs 会列出缺口）。
+   * 数值全部来自各自 damage 数组 + 描述。
+   */
+  7100260: { kind: 'stack', per: 20, label: '上回合未用攻击技能时永久 +20' },   // 绵里藏针 [60,2,1,20,2,2]
+  7110230: { kind: 'stack', per: 40, label: '每次入场永久 +40' },              // 落雷 [35,0,40]
+  7180400: { kind: 'hp-loss', per: 15, step: 10, cap: 1000, who: 'self', label: '每失去 10% 生命 +15（上限 1000）' }, // 血契 [75,1000,15,0]
+  7190440: { kind: 'energy-per', per: 20, of: '敌方印记层数', label: '敌方每 1 层印记 +20' }, // 天体吸积 [20,0,2,26,0,20]
+  7120220: {
+    kind: 'choice',
+    label: '敌方每层中毒 +10 / 应对状态时本次 +40',
+    options: [
+      { label: '敌方每有 1 层中毒 +10', per: 10 },
+      { label: '应对状态时本次威力 +40', add: 40 },
+    ],
+  }, // 鸩毒 [75,0,2,28,0,10]
+  7170120: { kind: 'energy-pct', per: 10, of: '敌方能量', label: '敌方每 1 能量 本次威力 −10%' }, // 坟场搏击 [180,-1800]
   // ── 二选一：点开后先选触发哪一个分支，再按选中的算 ──────────
   7021230: {
     kind: 'choice',
@@ -1926,6 +1943,7 @@ function effectAutoLabel(fx) {
     case 'cost-total': return `威力 = 敌方技能总能耗 × ${fx.per}`;
     case 'weight': return '按体重查表取威力';
     case 'ratio-table': return `按比值查表取威力（÷${fx.divisor}）`;
+    case 'energy-pct': return `每 1 点 ${fx.of ?? '能量'} 威力 −${fx.per}%`;
     case 'adjacent': return `威力 = 两侧技能威力和 ÷ ${fx.div}`;
     case 'adjacent-diff': return `威力 += 两侧技能威力差 ÷ ${fx.div}`;
     case 'choice': return (fx.options ?? []).map((o) => o.label).join(' / ');
@@ -1957,7 +1975,7 @@ function effectChoices(fx) {
 
 /** 这条效果需不需要靠用户填数值状态（要的话界面给输入框） */
 function effectNeedsState(fx) {
-  return !!fx && ['stack', 'stack-x2', 'hp-loss', 'energy-per', 'energy-all', 'weight', 'ratio-table', 'adjacent', 'adjacent-diff'].includes(fx.kind);
+  return !!fx && ['stack', 'stack-x2', 'hp-loss', 'energy-per', 'energy-all', 'weight', 'ratio-table', 'energy-pct', 'adjacent', 'adjacent-diff'].includes(fx.kind);
 }
 
 /**
@@ -2121,6 +2139,19 @@ function skillPowerOf(side, sp, sk, otherSp) {
       }
       break;
     }
+    case 'energy-pct': {
+      // 坟场搏击：敌方每有 1 能量，本次威力 **−10%**（按比例扣，不是按点加）
+      const k = `energy:${key}`;
+      const has = Object.prototype.hasOwnProperty.call(st, k);
+      const e = num(k);
+      needState = true;
+      if (has) {
+        const factor = Math.max(0, 1 - (e * fx.per) / 100);
+        power = clamp(base * factor);
+        parts.push({ label: `${e} 能量 × −${fx.per}%`, value: power - base });
+      }
+      break;
+    }
     case 'adjacent': {
       const l = num(`adj:${key}:l`); const r = num(`adj:${key}:r`);
       needState = true;
@@ -2170,6 +2201,7 @@ function skillEffectInputs(side, sk) {
         ? box(`def:${key}`, '敌方已失去生命 %', 'max="100"')
         : box(key, '自己已失去生命 %', 'max="100"');
     case 'energy-per':
+    case 'energy-pct':
       return box(`energy:${key}`, fx.of ?? '能量');
     case 'energy-all':
       return box(`energy:${key}`, '消耗能量', 'max="20"');
