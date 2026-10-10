@@ -104,7 +104,7 @@ const STATE = {
     fx: {},
     // 哪一侧的哪张技能卡片打开了「技能设置」弹窗
     fxOpen: {},
-    // 精灵选择下拉：哪一侧展开着、各自的搜索词
+    // 精灵选择下拉：哪一侧展开着、各自的搜索词（键现在是任意 picker 标识，含队伍格子）
     spOpen: null, spQuery: { a: '', b: '' },
     level: 60,
     // 与官方说明页算例同参数：(75 + 20) × (1 + 50%) = 142.5 -> 显示威力 356 -> 伤害 332
@@ -119,6 +119,11 @@ const STATE = {
     spirits: { q: '', types: new Set(), sort: 'id', dir: 1, forms: false },
     skills: { q: '', types: new Set(), cats: new Set(), sort: 'id', dir: 1, minDmg: '', maxEnergy: '' },
   },
+  /**
+   * 阵容：两侧各 6 个位置，存 `"id:form"` 键（与精灵表一致）。
+   * 分析矩阵（打击面 / 队伍弱点 / 速度）全部由这些成员现算，见 offenseCoverage 等。
+   */
+  teams: { a: [null, null, null, null, null, null], b: [null, null, null, null, null, null] },
   searchSel: -1,
   searchItems: [],
 };
@@ -485,7 +490,7 @@ function learnersOf(skillId) {
 /* ============================================================
    路由
    ============================================================ */
-const VIEWS = ['spirits', 'skills', 'types', 'calc', 'glossary'];
+const VIEWS = ['spirits', 'skills', 'types', 'calc', 'teams', 'glossary'];
 function route() {
   const hash = location.hash.replace(/^#\/?/, '') || 'spirits';
   const name = VIEWS.includes(hash) ? hash : 'spirits';
@@ -1095,32 +1100,37 @@ function usableSkillsOf(sp) {
  * 精灵选择：可搜索的下拉。
  * 原来是原生 <select>，几百只精灵只能靠输入首字跳转；这里做成
  * 「按钮显示当前选择 + 点开是带搜索框的列表」，按名字或编号过滤。
+ *
+ * opts.pickerKey：这个下拉的**唯一标识**，用来区分"哪个下拉展开了 / 各自的搜索词"。
+ *   伤害计算两侧用 'a' / 'b'；阵容格子用 'tm-a-0' 这种。
+ *   展开态存在 STATE.calc.spOpen，搜索词存在 STATE.calc.spQuery[pickerKey]。
  */
-function spiritPicker(side, current) {
+function spiritPicker(side, current, opts = {}) {
+  const pk = opts.pickerKey ?? side;
   const sp = STATE.bySpirit.get(current);
-  const q = (STATE.calc.spQuery?.[side] ?? '').trim().toLowerCase();
-  const open = STATE.calc.spOpen === side;
-  const label = sp ? `#${sp.id} ${sp.name}${sp.form ? '·' + sp.form : ''}` : '(未选择)';
+  const q = (STATE.calc.spQuery?.[pk] ?? '').trim().toLowerCase();
+  const open = STATE.calc.spOpen === pk;
+  const label = sp ? `#${sp.id} ${sp.name}${sp.form ? '·' + sp.form : ''}` : (opts.emptyLabel ?? '(未选择)');
   let list = '';
   if (open) {
     const all = STATE.data.spirits
       .filter((s) => (!q ? true : `${s.id} ${s.name}${s.form ? '·' + s.form : ''}`.toLowerCase().includes(q)))
       .slice(0, 60);
     list = `<div class="calc-picker-panel">
-      <input type="search" class="calc-picker-q" data-calc-picker-q="${side}"
-        placeholder="搜精灵名或编号…" value="${esc(STATE.calc.spQuery?.[side] ?? '')}" autocomplete="off">
+      <input type="search" class="calc-picker-q" data-calc-picker-q="${pk}"
+        placeholder="搜精灵名或编号…" value="${esc(STATE.calc.spQuery?.[pk] ?? '')}" autocomplete="off">
       <div class="calc-picker-list">
         ${all.length ? all.map((s) => {
       const key = `${s.id}:${s.formId}`;
       const nm = `#${s.id} ${s.name}${s.form ? '·' + s.form : ''}`;
       return `<button type="button" class="calc-picker-item${key === current ? ' on' : ''}"
-            data-calc-pick-spirit="${side}:${key}">${esc(nm)}</button>`;
+            data-calc-pick-spirit="${pk}:${key}">${esc(nm)}</button>`;
     }).join('') : '<div class="desc" style="padding:6px">没有匹配的精灵</div>'}
       </div>
     </div>`;
   }
   return `<div class="calc-picker">
-    <button type="button" class="calc-picker-btn" data-calc-picker="${side}"
+    <button type="button" class="calc-picker-btn" data-calc-picker="${pk}"
       aria-expanded="${open ? 'true' : 'false'}">
       <span class="calc-picker-cur">${esc(label)}</span>
       <span class="calc-picker-caret" aria-hidden="true">▾</span>
@@ -1581,16 +1591,25 @@ function bindSpiritPickerItems() {
     if (item.dataset.bound === '1') continue;
     item.dataset.bound = '1';
     item.addEventListener('click', () => {
-      // 属性值是 "side:formId:form"，精灵键本身含冒号，所以只切第一段
+      // 属性值是 "<pickerKey>:<精灵键>"，精灵键本身含冒号，所以只切第一段
       const raw = item.dataset.calcPickSpirit;
       const sep = raw.indexOf(':');
-      const side = raw.slice(0, sep);
+      const pk = raw.slice(0, sep);
       const key = raw.slice(sep + 1);
-      STATE.calc[side] = key;
-      STATE.calc.skillA = null; STATE.calc.skillB = null;
-      resetLoadoutInit(side);
       STATE.calc.spOpen = null;
-      STATE.calc.spQuery[side] = '';
+      STATE.calc.spQuery[pk] = '';
+      // 队伍格子（pk 形如 tm-a-0）：写进 STATE.teams
+      const m = /^tm-([ab])-(\d)$/.exec(pk);
+      if (m) {
+        const [, side, idx] = m;
+        STATE.teams[side] ??= [null, null, null, null, null, null];
+        STATE.teams[side][Number(idx)] = key;
+        return render();
+      }
+      // 伤害计算两侧
+      STATE.calc[pk] = key;
+      STATE.calc.skillA = null; STATE.calc.skillB = null;
+      resetLoadoutInit(pk);
       render();
     });
   }
@@ -2511,6 +2530,230 @@ function calcResultBlock(side, atkSp, defSp, sk, r, fxPower = null) {
   </div>`;
 }
 
+/* ============================================================
+   视图：阵容分析
+   ------------------------------------------------------------
+   两侧各 6 个位置；分析矩阵全部由**我们自己的数据**现算：
+     · 技能打击面：18 个防御系别里，队伍里至少有一招能打出「克制(≥×2)」的有几个
+     · 队伍弱点  ：18 个攻击系别里，能克制到队伍成员的；按命中人数排序
+     · 速度对比  ：两侧各自最快的成员速度（用面板值，含个体/性格）
+   数据来源：matchups（官方 effect_values）+ spirits.types + spirit_skills。
+   ============================================================ */
+
+/** 队伍成员（过滤掉空位），side = 'a' | 'b' */
+function teamMembers(side) {
+  return (STATE.teams[side] ?? []).map((key) => (key ? STATE.bySpirit.get(key) : null));
+}
+/** 队伍里非空成员数 */
+function teamCount(side) {
+  return teamMembers(side).filter(Boolean).length;
+}
+
+/**
+ * 技能打击面：18 个防御系别里，队伍**至少有一招**能打出克制（×2 或以上）的。
+ * 只看有威力的伤害技能（状态技不造成伤害，不该算进打击面）。
+ */
+function offenseCoverage(side) {
+  const members = teamMembers(side).filter(Boolean);
+  const out = [];
+  for (const def of STATE.data.meta.types) {
+    const by = members.find((sp) => usableSkillsOf(sp).some((sk) => {
+      if (!((sk.dmgMax ?? 0) > 0) || sk.cat === '状态' || !sk.typeId) return false;
+      return typeEffect(sk.typeId, [def.id]) >= 2;
+    }));
+    if (by) out.push({ type: def, by });
+  }
+  return out;
+}
+
+/**
+ * 队伍弱点：18 个攻击系别里能克制到队伍成员的。
+ * 返回按「命中人数」降序，命中的人越多越危险。
+ */
+function defenseWeakness(side) {
+  const members = teamMembers(side).filter(Boolean);
+  const out = [];
+  for (const atk of STATE.data.meta.types) {
+    const hit = members.filter((sp) => typeEffect(atk.id, sp.types ?? []) >= 2);
+    if (hit.length) out.push({ type: atk, members: hit, n: hit.length });
+  }
+  return out.sort((x, y) => y.n - x.n);
+}
+
+/** 队伍里最快的成员（面板速度，含个体/性格） */
+function teamFastest(side) {
+  const members = teamMembers(side).filter(Boolean);
+  let best = null;
+  for (const sp of members) {
+    const spd = calcStatsOf(sp, spiritCalcOf(sp)).spd ?? 0;
+    if (!best || spd > best.spd) best = { sp, spd };
+  }
+  return best;
+}
+
+/** 阵容快照：导出/导入用（纯文本，方便贴给朋友） */
+function teamSnapshot() {
+  return JSON.stringify({ v: 1, a: STATE.teams.a, b: STATE.teams.b });
+}
+
+/** 从快照文本恢复阵容；返回是否成功 */
+function loadTeamSnapshot(text) {
+  try {
+    const o = JSON.parse(text);
+    const norm = (arr) => {
+      const out = [null, null, null, null, null, null];
+      if (Array.isArray(arr)) {
+        for (let i = 0; i < 6; i++) {
+          const k = arr[i];
+          out[i] = (typeof k === 'string' && STATE.bySpirit.get(k)) ? k : null;
+        }
+      }
+      return out;
+    };
+    STATE.teams = { a: norm(o.a), b: norm(o.b) };
+    return true;
+  } catch { return false; }
+}
+
+const TEAM_STORE_KEY = 'roco-teams-v1';
+
+/** 存到浏览器本地 */
+function saveTeams() {
+  try {
+    localStorage.setItem(TEAM_STORE_KEY, teamSnapshot());
+    toast('阵容已保存在本机浏览器里');
+  } catch { toast('保存失败（浏览器禁用了本地存储？）'); }
+}
+/** 从浏览器本地读回 */
+function loadTeams() {
+  try {
+    const t = localStorage.getItem(TEAM_STORE_KEY);
+    if (!t) return toast('本机还没有保存过阵容');
+    return loadTeamSnapshot(t) ? (toast('已读取本机保存的阵容'), render()) : toast('存档损坏');
+  } catch { return toast('读取失败'); }
+}
+
+/** 一个队伍格子：有精灵就显示头像/名字/系别/速度，空位显示「+」 */
+function teamSlot(side, i) {
+  const key = STATE.teams[side]?.[i] ?? null;
+  const sp = key ? STATE.bySpirit.get(key) : null;
+  if (!sp) {
+    return `<div class="tm-slot empty" data-team-slot="${side}:${i}">
+      <div class="tm-add">+</div>
+      <div class="desc">第 ${i + 1} 位</div>
+      ${teamPicker(side, i, null)}
+    </div>`;
+  }
+  const spd = calcStatsOf(sp, spiritCalcOf(sp)).spd ?? 0;
+  return `<div class="tm-slot" data-team-slot="${side}:${i}">
+    <div class="tm-icon">${imgTag(sp.head, sp.headOnline, sp.name, 'tm-head')}</div>
+    <div class="tm-info">
+      <div class="tm-name">${esc(sp.name)}</div>
+      <div class="trow">${badges(sp.types)}</div>
+      <div class="desc">速度 ${spd}</div>
+    </div>
+    <div class="tm-ops">
+      <button type="button" class="chip" data-team-calc="${side}:${i}" title="把这只送到伤害计算">送去计算</button>
+      <button type="button" class="chip" data-team-clear="${side}:${i}" title="移出这个位置">×</button>
+    </div>
+    ${teamPicker(side, i, key)}
+  </div>`;
+}
+
+/** 队伍格子的精灵选择（复用伤害计算那套可搜索下拉，但状态键独立） */
+function teamPicker(side, i, current) {
+  // pickerKey 形如 team-a-0，用来区分每个格子的展开态与搜索词
+  return spiritPicker(`${side}${i}`, current, { pickerKey: `tm-${side}-${i}` });
+}
+
+function viewTeams() {
+  const a = STATE.teams.a ?? [];
+  const b = STATE.teams.b ?? [];
+  const offA = offenseCoverage('a');
+  const offB = offenseCoverage('b');
+  const weakA = defenseWeakness('a');
+  const weakB = defenseWeakness('b');
+  const fastA = teamFastest('a');
+  const fastB = teamFastest('b');
+  const TOT = STATE.data.meta.types.length;
+
+  const bar = (n, total, cls) => `<span class="tm-bar ${cls}"><i style="width:${total ? (n / total) * 100 : 0}%"></i></span>`;
+  const typeChips = (list, cls) => (list.length
+    ? list.map((t) => `<span class="tm-chip ${cls}" title="${esc(t.name)}">${badge(t.id)}</span>`).join('')
+    : '<span class="desc">—</span>');
+
+  const sideBlock = (side, sp) => {
+    const members = teamMembers(side).filter(Boolean);
+    const off = side === 'a' ? offA : offB;
+    const weak = side === 'a' ? weakA : weakB;
+    const fast = side === 'a' ? fastA : fastB;
+    const label = side === 'a' ? '我方' : '敌方';
+    return `<div class="panel tm-side">
+      <div class="tm-head">
+        <h3>${label}阵容 <span class="n">${members.length}/6</span></h3>
+        <div class="tm-head-ops">
+          <button type="button" class="chip" data-team-autofill="${side}" title="用图鉴默认形态随便填满（抽查用）">示例填满</button>
+          <button type="button" class="chip" data-team-clearall="${side}">清空</button>
+        </div>
+      </div>
+      <div class="tm-slots">${[0, 1, 2, 3, 4, 5].map((i) => teamSlot(side, i)).join('')}</div>
+      <div class="tm-stat">
+        <span class="desc">技能打击面</span>${bar(off.length, TOT, 'off')}
+        <b>${off.length}/${TOT}</b>
+      </div>
+      <div class="tm-chips">${typeChips(off.map((x) => x.type), 'off')}</div>
+      <div class="tm-stat">
+        <span class="desc">队伍弱点</span>${bar(weak.length, TOT, 'weak')}
+        <b>${weak.length}/${TOT}</b>
+      </div>
+      <div class="tm-chips">${weak.map((w) => `<span class="tm-chip weak" title="${w.n} 只被克制：${w.members.map((m) => m.name).join('、')}">${badge(w.type.id)}<i>×${w.n}</i></span>`).join('') || '<span class="desc">—</span>'}</div>
+      <div class="tm-stat">
+        <span class="desc">最快</span>
+        <b>${fast ? `${esc(fast.sp.name)} ${fast.spd}` : '—'}</b>
+      </div>
+    </div>`;
+  };
+
+  return `
+  <div class="page-head">
+    <h1>阵容分析</h1>
+    <span class="sub">两侧各 6 个位置 · 打击面 / 队伍弱点 / 速度 全部按${TOT} 个系别现算</span>
+  </div>
+
+  <div class="panel tm-toolbar">
+    <button type="button" class="chip" data-team-action="save">保存到本机</button>
+    <button type="button" class="chip" data-team-action="load">读取本机存档</button>
+    <button type="button" class="chip" data-team-action="copy">复制阵容代码</button>
+    <button type="button" class="chip" data-team-action="import">粘贴导入</button>
+    <span class="desc">阵容只存在你自己的浏览器里；「阵容代码」是一段文本，可以贴给朋友。</span>
+  </div>
+
+  <div class="calc-two tm-two">
+    ${sideBlock('a', a)}
+    ${sideBlock('b', b)}
+  </div>
+
+  <div class="panel">
+    <h3 style="margin-top:0">速度对比</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>我方</th><th class="num">速度</th><th>敌方</th><th class="num">速度</th></tr></thead>
+      <tbody>${[0, 1, 2, 3, 4, 5].map((i) => {
+    const ma = teamMembers('a')[i]; const mb = teamMembers('b')[i];
+    const sa = ma ? calcStatsOf(ma, spiritCalcOf(ma)).spd : null;
+    const sb = mb ? calcStatsOf(mb, spiritCalcOf(mb)).spd : null;
+    const cell = (sp, s) => (sp ? `${skillIconTag?.(sp.id) ?? ''}${esc(sp.name)}` : '<span class="desc">—</span>')
+      + (s != null ? `<span class="desc"> ${s}</span>` : '');
+    return `<tr><td>${cell(ma, sa)}</td><td class="num">${sa ?? '—'}</td>
+      <td>${cell(mb, sb)}</td><td class="num">${sb ?? '—'}</td></tr>`;
+  }).join('')}</tbody>
+    </table></div>
+    <div class="desc" style="margin-top:6px;font-size:12px">
+      速度取面板值（含种族 / 个体 / 性格），与伤害计算页的加点一致。
+      这里是纸面对比，未含先手、天气等对出手顺序的影响。
+    </div>
+  </div>`;
+}
+
 /**
  * 一侧的「可用技能」表：把这一侧**全部能用的技能**列出来，按伤害从高到低。
  * 数据源与技能下拉框一致（usableSkillsOf），所以升级 / 技能石 / 传说 / 血脉技能都在里面。
@@ -3287,13 +3530,102 @@ function selectSearch(i) {
 function render() {
   const app = $('#app');
   if (!STATE.data) return;
-  const fns = { spirits: viewSpirits, skills: viewSkills, types: viewTypes, calc: viewCalc, glossary: viewGlossary };
+  const fns = { spirits: viewSpirits, skills: viewSkills, types: viewTypes, calc: viewCalc, teams: viewTeams, glossary: viewGlossary };
   app.innerHTML = (fns[STATE.view] ?? viewSpirits)();
   bindView();
 }
 
 function bindView() {
   const app = $('#app');
+
+  // 精灵选择下拉（伤害计算两侧 + 阵容格子）—— 放在最外层，
+  // 因为它现在两个页面都用，不能再塞进 `if (calcEl)` 里（否则阵容页的下拉点不开）。
+  for (const btn of document.querySelectorAll('[data-calc-picker]')) {
+    btn.addEventListener('click', () => {
+      const pk = btn.dataset.calcPicker;
+      STATE.calc.spOpen = STATE.calc.spOpen === pk ? null : pk;
+      render();
+    });
+  }
+  for (const el of document.querySelectorAll('[data-calc-picker-q]')) {
+    el.addEventListener('input', debounce(() => {
+      const pk = el.dataset.calcPickerQ;
+      STATE.calc.spQuery[pk] = el.value;
+      const panel = el.parentNode;
+      const listEl = panel?.querySelector('.calc-picker-list');
+      if (!listEl) return;
+      const q = el.value.trim().toLowerCase();
+      const cur = STATE.bySpirit.has(STATE.calc[pk]) ? STATE.calc[pk] : (STATE.teams?.[pk?.[3]]?.[Number(pk?.[4])] ?? null);
+      const all = STATE.data.spirits
+        .filter((sp) => (!q ? true : `${sp.id} ${sp.name}${sp.form ? '·' + sp.form : ''}`.toLowerCase().includes(q)))
+        .slice(0, 60);
+      listEl.innerHTML = all.length ? all.map((sp) => {
+        const key = `${sp.id}:${sp.formId}`;
+        const nm = `#${sp.id} ${sp.name}${sp.form ? '·' + sp.form : ''}`;
+        return `<button type="button" class="calc-picker-item${key === cur ? ' on' : ''}"
+          data-calc-pick-spirit="${pk}:${key}">${esc(nm)}</button>`;
+      }).join('') : '<div class="desc" style="padding:6px">没有匹配的精灵</div>';
+      bindSpiritPickerItems();
+    }, 120));
+  }
+  bindSpiritPickerItems();
+
+  // 阵容分析页的按钮
+  for (const btn of document.querySelectorAll('[data-team-clear]')) {
+    btn.addEventListener('click', () => {
+      const [side, i] = btn.dataset.teamClear.split(':');
+      STATE.teams[side][Number(i)] = null;
+      render();
+    });
+  }
+  for (const btn of document.querySelectorAll('[data-team-clearall]')) {
+    btn.addEventListener('click', () => {
+      STATE.teams[btn.dataset.teamClearall] = [null, null, null, null, null, null];
+      render();
+    });
+  }
+  // 把队伍里的某一只送到伤害计算（攻/防按侧别对应）
+  for (const btn of document.querySelectorAll('[data-team-calc]')) {
+    btn.addEventListener('click', () => {
+      const [side, i] = btn.dataset.teamCalc.split(':');
+      const key = STATE.teams[side][Number(i)];
+      if (!key) return;
+      STATE.calc[side] = key;
+      STATE.calc.skillA = null; STATE.calc.skillB = null;
+      resetLoadoutInit(side);
+      toast(`已把这一只送到伤害计算的${side === 'a' ? '攻击方 A' : '防御方 B'}`);
+      location.hash = '#/calc';
+    });
+  }
+  // 示例填满：拿图鉴前 6 只默认形态（只为看矩阵长什么样，不是"推荐阵容"）
+  for (const btn of document.querySelectorAll('[data-team-autofill]')) {
+    btn.addEventListener('click', () => {
+      const side = btn.dataset.teamAutofill;
+      const list = STATE.data.spirits.filter((sp) => sp.formId === 1).slice(0, 6);
+      STATE.teams[side] = list.map((sp) => `${sp.id}:${sp.formId}`);
+      while (STATE.teams[side].length < 6) STATE.teams[side].push(null);
+      render();
+    });
+  }
+  for (const btn of document.querySelectorAll('[data-team-action]')) {
+    btn.addEventListener('click', () => {
+      const act = btn.dataset.teamAction;
+      if (act === 'save') return saveTeams();
+      if (act === 'load') return loadTeams();
+      if (act === 'copy') {
+        const txt = teamSnapshot();
+        navigator.clipboard?.writeText(txt)
+          .then(() => toast('阵容代码已复制，贴给朋友即可'))
+          .catch(() => toast('复制失败，请手动选择'));
+        return;
+      }
+      if (act === 'import') {
+        const txt = window.prompt('粘贴阵容代码：');
+        if (txt == null) return;
+        return loadTeamSnapshot(txt) ? (toast('导入成功'), render()) : toast('这段代码看不懂');
+      }
+    });
+  }
 
   // 伤害计算器：改任一项就重算（只重画计算区，不整页刷新）
   const calcEl = $('#app .calc-panel');
@@ -3498,42 +3830,8 @@ function bindView() {
     // 状态面板：「？异常与印记」说明
     document.querySelector('[data-st-help]')?.addEventListener('click', () => statusHelpDialog());
 
-    // 精灵选择：展开/收起
-    for (const btn of document.querySelectorAll('[data-calc-picker]')) {
-      btn.addEventListener('click', () => {
-        const side = btn.dataset.calcPicker;
-        STATE.calc.spOpen = STATE.calc.spOpen === side ? null : side;
-        render();
-      });
-    }
-    // 精灵选择：搜索框（输入后只重画下拉，避免整页刷新丢焦点）
-    for (const el of document.querySelectorAll('[data-calc-picker-q]')) {
-      el.addEventListener('input', debounce(() => {
-        const side = el.dataset.calcPickerQ;
-        STATE.calc.spQuery[side] = el.value;
-        const panel = el.parentNode;
-        // 只换列表部分，输入框保持焦点
-        const box = document.querySelector('.calc-picker-panel');
-        if (panel && box) {
-          const q = el.value.trim().toLowerCase();
-          const cur = STATE.calc[side];
-          const all = STATE.data.spirits
-            .filter((s) => (!q ? true : `${s.id} ${s.name}${s.form ? '·' + s.form : ''}`.toLowerCase().includes(q)))
-            .slice(0, 60);
-          const listEl = panel.querySelector('.calc-picker-list');
-          if (listEl) {
-            listEl.innerHTML = all.length ? all.map((s) => {
-              const key = `${s.id}:${s.formId}`;
-              const nm = `#${s.id} ${s.name}${s.form ? '·' + s.form : ''}`;
-              return `<button type="button" class="calc-picker-item${key === cur ? ' on' : ''}"
-                data-calc-pick-spirit="${side}:${key}">${esc(nm)}</button>`;
-            }).join('') : '<div class="desc" style="padding:6px">没有匹配的精灵</div>';
-            bindSpiritPickerItems();
-          }
-        }
-      }, 120));
-    }
-    bindSpiritPickerItems();
+    // 注：精灵选择下拉的绑定已经**上移到 bindView() 最外层**（阵容页也要用），
+    // 这里不要再绑一遍 —— 绑两遍会让同一个点击跑两次，展开又立刻收起（踩过）。
   }
 
   // 详情弹窗里的加点面板：改完只重画面板本身（不重画整个弹窗，避免滚动位置丢失）
@@ -3814,6 +4112,8 @@ $('#themeBtn').addEventListener('click', () => {
       // 技能特殊效果
       SKILL_EFFECTS, skillPowerOf, skillEffectOf, effectNeedsState, skillEffectInputs, damageSkillTable,
       effectHasSwitch, effectIsChoice, effectChoices, effectAutoLabel, skillFxDialog, openSkillFx, refreshFxModal,
+      // 阵容分析
+      teamMembers, teamCount, offenseCoverage, defenseWeakness, teamFastest, teamSnapshot, loadTeamSnapshot, viewTeams,
       // 血量与加点
       hpMaxOf, hpNowOf, targetHpOf, spiritCalcOf, calcStatsOf, natalBlock, redrawNatalBlock,
       statBreakdown, natalBoxEl, defaultInvestSet,

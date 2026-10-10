@@ -854,6 +854,44 @@ table.lo-table .lo-pct { font-size: 11px; color: var(--text-dim); font-variant-n
 .fx-modal-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 4px; border-top: 1px dashed var(--line); }
 .fx-modal-foot .fx-in input { width: 90px; }
 
+/* ------------------------------------------------------ 阵容分析 */
+.tm-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tm-two { align-items: start; }
+.tm-side { display: grid; gap: 9px; }
+.tm-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.tm-head h3 { margin: 0; font-size: 15px; }
+.tm-head .n { color: var(--text-faint); font-size: 12px; font-weight: 400; }
+.tm-head-ops { display: flex; gap: 6px; }
+.tm-slots { display: grid; gap: 7px; }
+.tm-slot {
+  position: relative; display: grid; grid-template-columns: 44px 1fr auto; gap: 9px; align-items: center;
+  padding: 7px 9px; border: 1px solid var(--line); border-radius: 10px; background: var(--card);
+}
+.tm-slot.empty { grid-template-columns: 1fr; justify-items: center; gap: 3px; padding: 12px 9px; border-style: dashed; }
+.tm-slot.empty .tm-add { font-size: 22px; line-height: 1; color: var(--text-faint); }
+.tm-icon img { width: 40px; height: 40px; border-radius: 9px; display: block; }
+.tm-info { min-width: 0; display: grid; gap: 2px; }
+.tm-name { font-size: 13px; font-weight: 600; }
+.tm-info .desc { font-size: 11px; }
+.tm-ops { display: flex; gap: 5px; }
+.tm-ops .chip { font-size: 11px; padding: 2px 7px; }
+/* 空位里的选择器要占满宽度 */
+.tm-slot .calc-picker { width: 100%; }
+.tm-stat { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim); }
+.tm-stat b { font-variant-numeric: tabular-nums; color: var(--text); }
+.tm-bar { flex: 1; height: 8px; border-radius: 4px; background: var(--card-hi); overflow: hidden; }
+.tm-bar > i { display: block; height: 100%; }
+.tm-bar.off > i { background: color-mix(in srgb, #2f855a 78%, #000); }
+.tm-bar.weak > i { background: color-mix(in srgb, #c53030 78%, #000); }
+.tm-chips { display: flex; flex-wrap: wrap; gap: 4px; min-height: 22px; }
+.tm-chip {
+  display: inline-flex; align-items: center; gap: 3px; padding: 1px 5px; border-radius: 6px;
+  background: var(--bg-soft); border: 1px solid var(--line);
+}
+.tm-chip.off { border-color: color-mix(in srgb, #2f855a 40%, var(--line)); }
+.tm-chip.weak { border-color: color-mix(in srgb, #c53030 40%, var(--line)); }
+.tm-chip i { font-style: normal; font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
 /* ------------------------------------------------------ 术语 */
 .glossary { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
 .gitem { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }

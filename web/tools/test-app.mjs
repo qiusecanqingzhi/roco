@@ -124,11 +124,15 @@ for (const [h, label] of [['#/skills', '技能库'], ['#/types', '系别克制']
   }
 }
 
-// 队伍页已移除：旧书签访问 #/teams 应回退到默认视图，不能白屏
+// 注：#/teams 现在是**有效页面**（阵容分析），所以要拿一个真的不存在的 hash 来验回退
 location.hash = '#/teams';
+const teamsPage = html();
+ok(!/推荐队伍/.test(teamsPage), '页面里已无旧的「推荐队伍」');
+ok(/阵容分析/.test(teamsPage), '#/teams 现在渲染阵容分析页');
+
+location.hash = '#/definitely-not-a-view';
 const fallback = html();
-ok(!/推荐队伍/.test(fallback), '页面里已无「推荐队伍」');
-ok(/精灵图鉴/.test(fallback), '访问 #/teams 回退到精灵图鉴（不是白屏）');
+ok(/精灵图鉴/.test(fallback), '未知 hash 回退到精灵图鉴（不是白屏）');
 
 // 回到精灵页并测试筛选逻辑（通过重新渲染 + 直接调用点击处理器较麻烦，这里验证数据层）
 location.hash = '#/spirits';
