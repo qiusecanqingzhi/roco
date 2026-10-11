@@ -371,19 +371,36 @@ const html4 = (h) => {
   const m = /④预计伤害([\s\S]{0,160}?)<\/div>/.exec(h);
   return m ? m[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : '(未找到)';
 };
-ok(/142\.5/.test(calcLive()), '页面摊开了①有效威力 142.5');
-ok(/356/.test(calcLive()), '页面摊开了②显示威力 356');
-// 注意：这里是【个体全 0】的默认状态，所以是 334。
-// 官方说明页算例的 332 是"岚鸟物攻个体 60 / 奇丽花物防个体 60"那组参数，
-// 已经在上面「完整公式：复现参考页的 332」里单独断言过。
-ok(/334/.test(calcLive()), `页面摊开了④预计伤害 334（默认个体全 0；实际页面：${(html4(calcLive()))}）`);
-ok(/0\.9024/.test(calcLive()), '页面显示等级系数 0.9024');
-ok(/需要/.test(calcLive()) && /下/.test(calcLive()), '给出「需要几下」');
+// 顶部的「计算结果」区与「技能」下拉框**已按用户要求删除**（技能卡片右侧已给出预计伤害）。
+// 所以那四个 ①②③④ 的数值改成在**函数层**断言 —— 比查 DOM 更稳，也不依赖页面排版。
+{
+  const a = A2.bySpirit.get('20:1');
+  const b = A2.bySpirit.get('43:1');
+  const sk = A2.bySkill.get(7150060);
+  const r = api.calcDamage(a, b, sk, {
+    level: 60, flatAdd: 20, skillPct: 0.5,
+    atkIV: 60, defIV: 60, atkNature: 'neutral', defNature: 'neutral',
+  });
+  ok(r.effective === 142.5, `①有效威力 142.5（实际 ${r.effective}）`);
+  ok(r.shown === 356, `②显示威力 356（实际 ${r.shown}）`);
+  ok(Math.abs(r.lvCoef - 0.9024) < 0.0001, `③等级系数 0.9024（实际 ${r.lvCoef.toFixed(4)}）`);
+  ok(r.dmg === 332, `④预计伤害 332（官方算例参数）`);
+  // 页面默认（个体全 0）是 334，也要对
+  const r0 = api.calcDamage(a, b, sk, { level: 60, flatAdd: 20, skillPct: 0.5 });
+  ok(r0.dmg === 334, `页面默认个体全 0 时 = 334（实际 ${r0.dmg}）`);
+}
+// 刻意移除的两块：谁加回来会在这里立刻失败
+ok((calcHtml.match(/class="calc-two calc-results"/g) || []).length === 0,
+  '顶部「计算结果」区已删除');
+ok(!/①有效威力/.test(calcHtml), '页面里不再摊开公式拆解');
 ok(/data-calc="level"/.test(calcHtml), '等级可调');
 ok(/data-calc="flatAdd"/.test(calcHtml), '固定加威力可调');
 ok(/data-calc="skillPct"/.test(calcHtml), '本次技能威力%可调');
 ok(/data-calc="atkStage"/.test(calcHtml) && /data-calc="defStage"/.test(calcHtml), '攻防等级可调');
-ok((calcHtml.match(/data-calc="skill"/g) || []).length === 2, '两侧各有一个技能选择框');
+ok((calcHtml.match(/data-calc="skill"/g) || []).length === 0, '「技能」下拉框已删除');
+ok(!/calc-skill-label/.test(calcHtml), '页面里没有技能下拉的残留');
+// 选技能只能靠点卡片 —— 这个入口必须还在
+ok((calcHtml.match(/data-calc-pick="/g) || []).length > 12, '仍然可以通过点技能卡片来选技能');
 // 两侧各自的「伤害技能」表（原来只有一个「伤害最高的技能」排序表，现在每侧一张，
 // 且列出的是**全部可用伤害技能**，不是前 12 个）
 ok(/的技能/.test(calcHtml), '有「XX 的技能」表');

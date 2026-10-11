@@ -2390,59 +2390,18 @@ function statusDamageOf(side, sp, opts = {}) {
 }
 
 /**
- * 一侧的「计算结果」块（有效威力 → 显示威力 → 等级系数 → 预计伤害）。
- * 原来挂在每侧六维卡片下面，现在抽出来放到顶部两侧并排 ——
- * 这样卡片区下面腾出的地方可以放这一侧的技能表。
- * 没选技能时返回占位文案。
+ * 一侧的面板（精灵 + 六维加点）。
+ *
+ * ⚠ 这里原来还有一个「技能」下拉框，现已删除 —— 下面那一整块技能卡片本来就承担了
+ * 选技能的职责（点卡片即设为当前技能），下拉框是重复入口，而且几百个技能滚动找很费劲。
  */
-function sideResultBlock(side, sp, otherSp, opts = {}) {
+function calcSide(side, sp, otherSp) {
   const c = STATE.calc;
   const isA = side === 'a';
-  const curSkillId = isA ? c.skillA : c.skillB;
-  const curSkill = curSkillId ? STATE.bySkill.get(curSkillId) : null;
-  const atkKey = opts.atkKey ?? null;
-  const defKey = opts.defKey ?? null;
-  if (!curSkill || !atkKey || !defKey) {
-    return `<div class="calc-result zero"><div class="desc" style="padding:10px 0">
-      ${esc(sp.name)} 还没选技能 —— 从下面的技能表里点一行，或在上方下拉框里选一个。</div></div>`;
-  }
-  const cfg = withCalcSide(side, () => spiritCalcOf(sp));
-  // 技能特殊效果：先把实际基础威力算出来（叠加层数 / 条件 / 能量 / 体重…），再套标准公式
-  const fxPower = skillPowerOf(side, sp, curSkill, otherSp);
-  const r = calcDamage(sp, otherSp, curSkill, {
-    level: c.level,
-    atkIV: cfg.stats[atkKey].iv, atkNature: cfg.stats[atkKey].nature,
-    // 对面的"挨打那一项"用对面自己的配置
-    defIV: withCalcSide(isA ? 'b' : 'a', () => spiritCalcOf(otherSp).stats[defKey].iv),
-    defNature: withCalcSide(isA ? 'b' : 'a', () => spiritCalcOf(otherSp).stats[defKey].nature),
-    power: fxPower.power,
-    flatAdd: c.flatAdd, skillPct: c.skillPct,
-    atkStage: c.atkStage, defStage: c.defStage,
-    powerMul: c.powerMul, finalMul: c.finalMul,
-    targetHp: targetHpOf(isA ? 'b' : 'a', otherSp),
-    // 状态面板里的攻击因子：出招这一侧的加成 + 挨打那一侧的防加成
-    mods: isA ? c.modsA : c.modsB,
-    defMods: isA ? c.modsB : c.modsA,
-  });
-  return calcResultBlock(side, sp, otherSp, curSkill, r, fxPower);
-}
-
-/** 一侧的面板 + 技能选择。加点用与详情页同一套组件（个体按钮 + 性格逐项开关）
- *  opts.atkKey：这一侧出招用的攻击项（没选技能时传 null，就不画攻击高亮）
- *  opts.defKey：这一侧挨打看的防御项（对面没选技能时传 null） */
-function calcSide(side, sp, otherSp, opts = {}) {
-  const c = STATE.calc;
-  const isA = side === 'a';
-  const skills = usableSkillsOf(sp);
-  const curSkillId = isA ? c.skillA : c.skillB;
 
   // 这一侧自己的加点配置（与详情页、与另一侧都独立）
   const cfg = withCalcSide(side, () => spiritCalcOf(sp));
 
-  const skillOpts = skills.map((s) => {
-    const tag = s.src === 'blood' ? '血脉' : s.src === 'legendary' ? '传说' : s.src === 'machine' ? '技能石' : '';
-    return `<option value="${s.id}"${s.id === curSkillId ? ' selected' : ''}>${esc(s.name)}${s.cat ? ` · ${esc(s.cat)}` : ''}${s.dmgMax ? ` · 威力${s.dmgMax}` : ''}${tag ? ` · ${tag}` : ''}</option>`;
-  }).join('');
 
   return `
   <div class="calc-side">
@@ -2457,11 +2416,6 @@ function calcSide(side, sp, otherSp, opts = {}) {
       </div>
     </div>
 
-    <label class="calc-skill-label">技能
-      <select class="calc-select" id="cskill-${side}" data-calc="skill" data-side="${side}">
-        <option value="">— 请选择技能 —</option>${skillOpts}
-      </select>
-    </label>
 
     <div class="calc-toolbar">
       <span class="desc">个体上限 <b>${IV_MAX}</b>　最多投 <b>3 项</b></span>
@@ -2478,56 +2432,6 @@ function withCalcSide(side, fn) {
   const prev = STATE.calcSide;
   STATE.calcSide = side;
   try { return fn(); } finally { STATE.calcSide = prev; }
-}
-
-/** 计算过程逐步展开。fxPower 是 skillPowerOf 的结果（技能特殊效果，可能为 undefined） */
-function calcResultBlock(side, atkSp, defSp, sk, r, fxPower = null) {
-  // 克制文案：双克制是 ×3（不是 ×4），双抵抗是 ×¼
-  const zone = r.typeEff === 3 ? '×3 双克制'
-    : r.typeEff === 2 ? '×2 克制'
-      : r.typeEff === 1 ? '×1 普通'
-        : r.typeEff === 0.5 ? '×½ 抵抗'
-          : r.typeEff === 0.25 ? '×¼ 双抵抗' : `×${r.typeEff}`;
-  const stabTxt = r.stab > 1 ? '×1.25（本系）' : '×1';
-  // 技能特殊效果：有修正时在第①行之前插一段"基础威力 + 修正 = 实际威力"，
-  // 并给需要用户填对局状态的那些效果配输入框
-  const fx = fxPower?.fx ?? null;
-  const fxRow = fx ? `
-    <div class="cf fx-flow"><span>技能效果</span><b>${fxPower.base}
-      ${fxPower.parts.length ? ` ${fxPower.parts.map((p) => `${p.value >= 0 ? '+' : ''}${p.value}`).join(' ')} = <u>${fxPower.power}</u>` : '（当前无修正）'}
-    </b></div>
-    <div class="fx-detail">
-      <span class="desc">${esc(fx.label ?? '')}</span>
-      <div class="fx-inputs">${skillEffectInputs(side, sk)}</div>
-    </div>` : '';
-  const multTxt = fxPower?.mult > 1 ? `<span class="pill fx-mult">伤害 ×${fxPower.mult}</span>` : '';
-  // 倍数伤害（穿膛"造成 5 倍伤害"）作用在最终伤害上
-  const dmgFinal = Math.floor(r.dmg * (fxPower?.mult ?? 1));
-  return `
-  <div class="calc-result${r.dmg <= 0 ? ' zero' : ''}">
-    <div class="calc-flow">
-      ${fxRow}
-      <div class="cf"><span>①有效威力</span><b>(${r.basePower} + ${r.flatAdd}) × (1 + ${(r.skillPct * 100).toFixed(0)}%) = ${fmt(r.effective)}</b></div>
-      <div class="cf"><span>②显示威力</span><b>round(${fmt(r.effective)} × 本系${r.stab} × 克制${r.typeEff} × 等级${fmt(r.atkZone)}) = ${r.shown}</b></div>
-      <div class="cf"><span>③等级系数</span><b>(${r.level} × 45/100 + 10) / 41 = ${r.lvCoef.toFixed(4)}</b></div>
-      <div class="cf"><span>④预计伤害</span><b>floor(round(${r.atkStat} × ${r.shown} × ${r.lvCoef.toFixed(4)}) / ${r.defStat}) = ${r.dmg}</b></div>
-    </div>
-    <div class="calc-tags">
-      <span class="pill">${r.isPhysical ? '物理' : r.isStatus ? '状态' : '魔法'}</span>
-      <span class="pill">${esc(sk.type ?? '')}</span>
-      <span class="pill">${zone}</span>
-      <span class="pill">本系 ${stabTxt}</span>
-      <span class="pill">${r.atkKey === 'patk' ? '物攻' : '魔攻'} ${r.atkStat} vs ${r.defKey === 'pdef' ? '物防' : '魔防'} ${r.defStat}</span>
-      ${multTxt}
-    </div>
-    <div class="calc-out">
-      <div class="big"><span>预计伤害</span><b>${dmgFinal}</b>${fxPower?.mult > 1 ? `<span class="desc">（${r.dmg} × ${fxPower.mult}）</span>` : ''}</div>
-      <div class="big"><span>对方血量</span><b>${r.targetHp}</b></div>
-      <div class="big"><span>占比</span><b>${((r.targetHp > 0 ? dmgFinal / r.targetHp : 0) * 100).toFixed(1)}%</b></div>
-      <div class="big"><span>需要</span><b>${dmgFinal <= 0 ? '—' : `${Math.ceil(r.targetHp / dmgFinal)} 下`}</b></div>
-    </div>
-    ${r.isStatus ? '<div class="desc">状态技能不造成伤害（公式里按 0 处理）</div>' : ''}
-  </div>`;
 }
 
 /* ============================================================
@@ -2975,22 +2879,14 @@ function viewCalc() {
   if (!loadoutInited('a') && loadoutIsEmpty('a')) { fillLoadoutWithTop('a', a, b, 4); markLoadoutInited('a'); }
   if (!loadoutInited('b') && loadoutIsEmpty('b')) { fillLoadoutWithTop('b', b, a, 4); markLoadoutInited('b'); }
 
-  // 这一次参与计算的两项。没选技能就是 null（不高亮）——
-  // 不要 fallback 成物攻，否则会误导成"这一项在参与计算"。
-  const skA = c.skillA ? STATE.bySkill.get(c.skillA) : null;
-  const skB = c.skillB ? STATE.bySkill.get(c.skillB) : null;
-  const atkOf = (sk) => (sk ? ((sk.cat ?? '') === '魔法' ? 'satk' : 'patk') : null);
-  // 攻防对应：物攻打物防、魔攻打魔防。所以"我方出招用的攻"决定"对方挨打看的防"
-  const defAgainst = (atk) => (atk === null ? null : atk === 'satk' ? 'sdef' : 'pdef');
-  const aAtk = atkOf(skA);
-  const bAtk = atkOf(skB);
-  const bDef = defAgainst(aAtk);   // A 出招 -> 打的是 B 的这个防
-  const aDef = defAgainst(bAtk);   // B 出招 -> 打的是 A 的这个防
+  // 注：原来这里还算过 skA/skB 与其攻防配对，供顶部的「计算结果」区使用；
+  // 那个区已删除（技能卡片右侧直接给了预计伤害/占比/斩杀），所以这些局部量也一并去掉。
+  // 攻防配对的逻辑本身仍在：每张技能卡片计算时按该技能的 cat 自己决定走物攻还是魔攻。
 
   return `
   <div class="page-head">
     <h1>伤害计算</h1>
-    <span class="sub">按官方结算顺序逐步计算：有效威力 → 显示威力 → 等级系数 → 预计伤害</span>
+    <span class="sub">点技能卡片右侧看预计伤害；带额外效果的技能点「技能设置」调条件</span>
   </div>
 
   <div class="calc-panel">
@@ -3004,27 +2900,15 @@ function viewCalc() {
       <label>最终乘区 <input type="number" id="c-finalMul" step="0.05" value="${c.finalMul}" data-calc="finalMul"></label>
     </div>
 
-    <!-- 两侧的精灵面板并排：选精灵 / 选技能 / 加点 -->
+    <!-- 两侧的精灵面板并排：选精灵 / 加点 -->
     <div class="calc-two">
       <div class="calc-col">
         <div class="calc-who atk">攻击方 A</div>
-        ${calcSide('a', a, b, { atkKey: aAtk, defKey: bDef })}
+        ${calcSide('a', a, b)}
       </div>
       <div class="calc-col">
         <div class="calc-who def">防御方 B</div>
-        ${calcSide('b', b, a, { atkKey: bAtk, defKey: aDef })}
-      </div>
-    </div>
-
-    <!-- 两侧的计算结果并排（原来挂在各自卡片下面，现在提到这里） -->
-    <div class="calc-two calc-results">
-      <div class="calc-col">
-        <div class="calc-who atk">${esc(a.name)} 打 ${esc(b.name)}</div>
-        ${sideResultBlock('a', a, b, { atkKey: aAtk, defKey: bDef })}
-      </div>
-      <div class="calc-col">
-        <div class="calc-who def">${esc(b.name)} 打 ${esc(a.name)}</div>
-        ${sideResultBlock('b', b, a, { atkKey: bAtk, defKey: aDef })}
+        ${calcSide('b', b, a)}
       </div>
     </div>
 
